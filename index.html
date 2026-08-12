@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Inhibited Abyss</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕳️</text></svg>" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="app">
+  <canvas id="view"></canvas>
+
+  <!-- ===================== In-game HUD ===================== -->
+  <div id="hud" class="hidden">
+
+    <div id="crosshair">
+      <span class="ch ch-t"></span><span class="ch ch-b"></span>
+      <span class="ch ch-l"></span><span class="ch ch-r"></span>
+      <span class="ch-dot"></span>
+      <svg id="hitmarker" viewBox="0 0 40 40"><path d="M6 6 L14 14 M34 6 L26 14 M6 34 L14 26 M34 34 L26 26"/></svg>
+    </div>
+
+    <div id="dmgnums"></div>
+
+    <div id="vignette"></div>
+    <div id="glitchOverlay"></div>
+    <div id="flashOverlay"></div>
+
+    <!-- Top-left: floor + objective -->
+    <div id="topleft">
+      <div id="floorTag"><span id="floorNum">B1</span><span id="floorName">Cold Storage</span></div>
+      <div id="objective">
+        <div id="objTitle">OBJECTIVE</div>
+        <div id="objText">—</div>
+        <div id="objBar"><i></i></div>
+      </div>
+      <div id="waveInfo" class="hidden"></div>
+    </div>
+
+    <!-- Top-right: shards + run timer -->
+    <div id="topright">
+      <div id="shards"><span class="lbl">SHARDS</span><span id="shardVal">0</span></div>
+      <div id="runTime">0:00</div>
+      <div id="killCount">0 kills</div>
+    </div>
+
+    <!-- Boss bar -->
+    <div id="bossBar" class="hidden">
+      <div id="bossName">BOSS</div>
+      <div id="bossTitle"></div>
+      <div id="bossTrack"><i id="bossFill"></i></div>
+    </div>
+
+    <!-- Bottom-left: vitals -->
+    <div id="vitals">
+      <div id="hpRow">
+        <div id="hpTrack"><i id="hpFill"></i><i id="debtFill"></i></div>
+        <div id="hpVal">100</div>
+      </div>
+      <div id="statusRow"></div>
+    </div>
+
+    <!-- Bottom-right: loadout -->
+    <div id="loadout">
+      <div class="slot" id="slot0">
+        <div class="slot-key">1</div>
+        <div class="slot-body">
+          <div class="slot-name">Knuckles</div>
+          <div class="slot-ammo">∞</div>
+        </div>
+      </div>
+      <div class="slot" id="slot1">
+        <div class="slot-key">2</div>
+        <div class="slot-body">
+          <div class="slot-name">— empty —</div>
+          <div class="slot-ammo"></div>
+        </div>
+      </div>
+      <div id="reloadBar" class="hidden"><i></i></div>
+      <div id="chargeBar" class="hidden"><i></i></div>
+    </div>
+
+    <!-- Synergy readout -->
+    <div id="synergyPanel"></div>
+
+    <!-- Center prompts -->
+    <div id="interactPrompt" class="hidden"><b>E</b><span></span></div>
+    <div id="toasts"></div>
+    <div id="bigBanner" class="hidden"><div id="bannerMain"></div><div id="bannerSub"></div></div>
+
+    <!-- Intercom subtitles -->
+    <div id="intercom" class="hidden">
+      <div id="intercomSpeaker">DR. KIMVATCH</div>
+      <div id="intercomText"></div>
+    </div>
+
+    <div id="compass"></div>
+  </div>
+
+  <!-- ===================== Screens ===================== -->
+
+  <div id="titleScreen" class="screen">
+    <div class="title-art">
+      <div class="title-sub">TECHNO TRAINING POD 9001 — PATIENT SESSION</div>
+      <h1>INHIBITED<span>ABYSS</span></h1>
+      <div class="title-rule"></div>
+      <p class="title-blurb">
+        You are Michael Sandlor. Ten floors and a basement. Two weapons at a time,
+        never the ones you asked for, and a door that only opens for someone who finished.
+      </p>
+    </div>
+    <div class="title-actions">
+      <button id="btnStart" class="primary">BEGIN SESSION</button>
+      <button id="btnHow">CONTROLS &amp; RULES</button>
+      <button id="btnCodex">WEAPON CODEX</button>
+    </div>
+    <div class="title-foot">Headphones recommended. Click to lock the mouse; <b>Esc</b> to release.</div>
+  </div>
+
+  <div id="howScreen" class="screen hidden">
+    <h2>HOW THE POD WORKS</h2>
+    <div class="cols">
+      <div>
+        <h3>Controls</h3>
+        <ul class="keys">
+          <li><b>W A S D</b><span>Move</span></li>
+          <li><b>Mouse</b><span>Look</span></li>
+          <li><b>Left click</b><span>Fire / swing</span></li>
+          <li><b>Shift</b><span>Sprint</span></li>
+          <li><b>Space</b><span>Jump</span></li>
+          <li><b>Ctrl / C</b><span>Dodge roll (brief invulnerability)</span></li>
+          <li><b>R</b><span>Reload</span></li>
+          <li><b>Q</b><span>Swap weapon</span></li>
+          <li><b>1 / 2</b><span>Select slot</span></li>
+          <li><b>E</b><span>Interact — chests, panels, the lift</span></li>
+          <li><b>F</b><span>Drop the active weapon</span></li>
+          <li><b>Tab</b><span>Loadout &amp; synergy detail</span></li>
+          <li><b>M</b><span>Mute audio</span></li>
+          <li><b>Esc</b><span>Pause</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Rules of the climb</h3>
+        <ul class="rules">
+          <li><b>Two weapons, no requests.</b> Every chest rolls at random. Two chests per floor and two hands — something always gets left behind.</li>
+          <li><b>Synergies are found, not chosen.</b> Certain pairs power each other up. Certain pairs refuse to cooperate and both get worse. Mix and match.</li>
+          <li><b>Clear the objective, then the boss.</b> Each floor locks its final door until the objective is done.</li>
+          <li><b>Shards buy nothing you need and everything you want.</b> Spend them at Vend-o-Trons for ammo, health, and re-rolls.</li>
+          <li><b>Dying costs you the floor, not the run.</b> The Pod is patient. That is the problem.</li>
+        </ul>
+      </div>
+    </div>
+    <button class="back primary">BACK</button>
+  </div>
+
+  <div id="codexScreen" class="screen hidden">
+    <h2>WEAPON CODEX</h2>
+    <div id="codexNote">Everything the Pod can issue. It will not issue what you ask for.</div>
+    <div id="codexList"></div>
+    <button class="back primary">BACK</button>
+  </div>
+
+  <div id="pauseScreen" class="screen hidden">
+    <h2>SESSION PAUSED</h2>
+    <div id="pauseStats"></div>
+    <div class="sliders">
+      <label>Master volume <input id="volMaster" type="range" min="0" max="100" value="70" /></label>
+      <label>Music <input id="volMusic" type="range" min="0" max="100" value="45" /></label>
+      <label>Effects <input id="volSfx" type="range" min="0" max="100" value="80" /></label>
+      <label>Mouse sensitivity <input id="sens" type="range" min="20" max="400" value="110" /></label>
+    </div>
+    <div class="pause-actions">
+      <button id="btnResume" class="primary">RESUME</button>
+      <button id="btnPauseHow">CONTROLS</button>
+      <button id="btnQuit">ABANDON SESSION</button>
+    </div>
+  </div>
+
+  <div id="loadoutScreen" class="screen hidden transparent">
+    <h2>LOADOUT</h2>
+    <div id="loadoutDetail"></div>
+    <div class="hint">Hold <b>Tab</b></div>
+  </div>
+
+  <div id="revealScreen" class="screen hidden transparent noclick">
+    <div id="revealCard">
+      <div id="revealRarity">STANDARD</div>
+      <h2 id="revealName">WEAPON</h2>
+      <div id="revealDesc"></div>
+      <div id="revealTip"></div>
+      <div id="revealFlavor"></div>
+      <div id="revealTake">Press <b>E</b> to take it — it replaces <span id="revealReplace">slot 1</span>. <b>Q</b> changes slot.</div>
+    </div>
+  </div>
+
+  <div id="deathScreen" class="screen hidden">
+    <h2 id="deathTitle">INCAPACITATED</h2>
+    <div id="deathBody"></div>
+    <button id="btnRespawn" class="primary">RESTART FLOOR</button>
+  </div>
+
+  <div id="floorScreen" class="screen hidden">
+    <div id="floorCardNum">FLOOR 1</div>
+    <h2 id="floorCardName">THE SORTING FLOOR</h2>
+    <div id="floorCardSub"></div>
+    <div id="floorCardLoad">Assembling…</div>
+  </div>
+
+  <div id="victoryScreen" class="screen hidden">
+    <h2>COURSE COMPLETE</h2>
+    <div id="victoryBody"></div>
+    <button id="btnVictory" class="primary">RETURN TO TITLE</button>
+  </div>
+
+  <div id="loadingScreen" class="screen">
+    <div class="boot">
+      <div class="boot-line">TECHNO TRAINING POD 9001</div>
+      <div class="boot-line dim">initialising patient session…</div>
+      <div class="boot-bar"><i></i></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
