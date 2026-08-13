@@ -6,6 +6,8 @@ import * as THREE from '../../vendor/three.module.js';
 /**
  * Merge an array of BufferGeometry into one. All inputs must share the same
  * attribute set; we normalise to position/normal/uv and index everything.
+ * A `color` attribute is carried through when any input has one — that's how
+ * baked ambient occlusion reaches the level meshes.
  */
 export function mergeGeometries(geoms) {
   const kept = geoms.filter((g) => g && g.attributes.position);
@@ -13,14 +15,17 @@ export function mergeGeometries(geoms) {
 
   let vertexCount = 0;
   let indexCount = 0;
+  let anyColor = false;
   for (const g of kept) {
     vertexCount += g.attributes.position.count;
     indexCount += g.index ? g.index.count : g.attributes.position.count;
+    if (g.attributes.color) anyColor = true;
   }
 
   const position = new Float32Array(vertexCount * 3);
   const normal = new Float32Array(vertexCount * 3);
   const uv = new Float32Array(vertexCount * 2);
+  const color = anyColor ? new Float32Array(vertexCount * 3).fill(1) : null;
   const index = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
 
   let vo = 0, io = 0;
@@ -28,9 +33,11 @@ export function mergeGeometries(geoms) {
     const p = g.attributes.position;
     const n = g.attributes.normal;
     const u = g.attributes.uv;
+    const c = g.attributes.color;
     position.set(p.array.subarray(0, p.count * 3), vo * 3);
     if (n) normal.set(n.array.subarray(0, n.count * 3), vo * 3);
     if (u) uv.set(u.array.subarray(0, u.count * 2), vo * 2);
+    if (color && c) color.set(c.array.subarray(0, c.count * 3), vo * 3);
     if (g.index) {
       const gi = g.index.array;
       for (let i = 0; i < gi.length; i++) index[io + i] = gi[i] + vo;
@@ -46,9 +53,56 @@ export function mergeGeometries(geoms) {
   out.setAttribute('position', new THREE.BufferAttribute(position, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  if (color) out.setAttribute('color', new THREE.BufferAttribute(color, 3));
   out.setIndex(new THREE.BufferAttribute(index, 1));
   out.computeBoundingSphere();
   return out;
+}
+
+/**
+ * A single quad from four corners (counter-clockwise), with per-corner vertex
+ * colours. This is the workhorse for level surfaces: emitting only the faces
+ * that are actually visible, each carrying its own baked shading, produces far
+ * less geometry and far more depth than boxes ever did.
+ */
+export function quad(a, b, c, d, colors, uvScale = 1) {
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array([
+    a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2],
+    a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2],
+  ]);
+  // Flat normal from the first triangle.
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+  const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const nl = Math.hypot(nx, ny, nz) || 1;
+  nx /= nl; ny /= nl; nz /= nl;
+  const nrm = new Float32Array(18);
+  for (let i = 0; i < 6; i++) { nrm[i * 3] = nx; nrm[i * 3 + 1] = ny; nrm[i * 3 + 2] = nz; }
+  const uvs = new Float32Array([
+    0, 0, uvScale, 0, uvScale, uvScale,
+    0, 0, uvScale, uvScale, 0, uvScale,
+  ]);
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (colors) {
+    const [ca, cb, cc, cd] = colors;
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array([
+      ca, ca, ca, cb, cb, cb, cc, cc, cc,
+      ca, ca, ca, cc, cc, cc, cd, cd, cd,
+    ]), 3));
+  }
+  return g;
+}
+
+/** Uniform vertex colour on an existing geometry, for merging alongside quads. */
+export function paint(geo, shade) {
+  const n = geo.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  for (let i = 0; i < n * 3; i++) arr[i] = shade;
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
 }
 
 const _m = new THREE.Matrix4();

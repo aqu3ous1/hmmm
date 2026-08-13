@@ -24,6 +24,7 @@ import { WeaponRuntime } from './combat/weaponRuntime.js';
 import { Chest, WeaponIconCache } from './props/chest.js';
 import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/models.js';
 
+import { PostFX } from './render/postfx.js';
 import { HUD, buildCodex, renderLoadoutDetail } from './ui/hud.js';
 import { STORY, AmbientPool } from './story/script.js';
 
@@ -97,6 +98,10 @@ class Game {
     this.renderer.autoClear = false;
     this.renderer.info.autoReset = false;   // we render twice per frame; reset manually
     this.renderer.setClearColor(0x000000, 1);
+    // The scene renders linear into an HDR target; PostFX owns exposure,
+    // tonemapping and the sRGB encode.
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    this.post = new PostFX(this.renderer);
   }
 
   _initWorldScene() {
@@ -106,18 +111,18 @@ class Game {
 
     // three.js dropped the legacy PI light scaling in r155, so every intensity
     // here is roughly PI times what the old default would have been.
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-    this.hemi = new THREE.HemisphereLight(0x9fc4ff, 0x121820, 1.6);
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    this.hemi = new THREE.HemisphereLight(0x9fc4ff, 0x121820, 0.9);
     this.scene.add(this.ambientLight, this.hemi);
 
     // Torch that follows the player — the primary readable light source.
-    this.torch = new THREE.PointLight(0xfff0d8, 4.2, 24, 1.1);
+    this.torch = new THREE.PointLight(0xfff0d8, 3.6, 19, 1.15);
     this.scene.add(this.torch);
 
     // A small pool of static lights snapped to the nearest ceiling panels.
     this.roomLights = [];
     for (let i = 0; i < 7; i++) {
-      const l = new THREE.PointLight(0xffffff, 0, 26, 1.2);
+      const l = new THREE.PointLight(0xffffff, 0, 20, 1.2);
       l.visible = false;
       this.scene.add(l);
       this.roomLights.push(l);
@@ -199,6 +204,7 @@ class Game {
     this.camera.updateProjectionMatrix();
     this.vmCamera.aspect = w / h;
     this.vmCamera.updateProjectionMatrix();
+    this.post.setSize(w, h, this.renderer.getPixelRatio());
     this.vw = w; this.vh = h;
   }
 
@@ -301,10 +307,18 @@ class Game {
     const pal = cfg.palette;
     this.scene.fog = new THREE.FogExp2(pal.fog, pal.fogDensity);
     this.renderer.setClearColor(pal.fog, 1);
-    this.ambientLight.intensity = cfg.ambient * 3.1;
+    this.ambientLight.intensity = cfg.ambient * 2.0;
     this.hemi.color.setHex(pal.light);
     this.hemi.groundColor.setHex(pal.floor);
-    this.hemi.intensity = 1.5;
+    this.hemi.intensity = 0.9;
+    this.post.setGrade({
+      tint: pal.light,
+      bloom: pal.bloom ?? 0.7,
+      exposure: pal.exposure ?? 1.08,
+      saturation: pal.saturation ?? 1.1,
+      contrast: pal.contrast ?? 1.06,
+      vignette: pal.vignette ?? 0.52,
+    });
     this.torch.color.setHex(0xfff0d8);
     for (const l of this.roomLights) l.color.setHex(pal.light);
 
@@ -368,7 +382,7 @@ class Game {
     this.bossSpawned = false;
     this.objectiveDone = false;
     this.holdout = null;
-    this.ambientTimer = 34;
+    this.ambientTimer = this._ambientGap();
     this.ambientPools.set(index, new AmbientPool(STORY.ambient[index] || []));
     this.hud.setFloor(cfg);
     this._updateObjectiveHud();
@@ -385,12 +399,12 @@ class Game {
     if (this.floorIndex === 0 && this.prologue) {
       // Dark room. Only the chest glows.
       this.prologueActive = true;
-      this.ambientLight.intensity = 0.09;
-      this.hemi.intensity = 0.16;
+      this.ambientLight.intensity = 0.05;
+      this.hemi.intensity = 0.09;
       this.torch.intensity = 0.5;
       this.scene.fog.density = 0.15;
       for (const l of this.roomLights) { l.visible = false; l.intensity = 0; }
-      this.chestLight = new THREE.PointLight(0x9fe4ff, 6.5, 18, 1.15);
+      this.chestLight = new THREE.PointLight(0x9fe4ff, 5.0, 18, 1.2);
       this.chestLight.position.copy(this.chests[0].pos).add(new THREE.Vector3(0, 1.4, 0));
       this.scene.add(this.chestLight);
       this._queue(STORY.awaken);
@@ -668,7 +682,7 @@ class Game {
       toast: (t, k, l) => this.hud.toast(t, k, l),
       viewKick: (amount, melee) => this._viewKick(amount, melee),
       muzzleFlash: (w, e) => this._muzzleFlash(w, e),
-      hitMarker: (crit) => this.hud.hitMarker(crit),
+      hitMarker: (crit, head) => this.hud.hitMarker(crit, head),
       swingViewmodel: () => { this.vmSwing = 1; },
       raycastTargets: (o, ux, uy, uz, maxD) => this._raycastTargets(o, ux, uy, uz, maxD),
       targetsInCone: (o, dir, range, arc) => this._targetsInCone(o, dir, range, arc),
@@ -745,16 +759,33 @@ class Game {
         y = origin.y + uy * hit;
       }
 
+      // Head test: a sphere centred on the model's actual head. Checked
+      // separately so a shot can clip the head even when the body cylinder
+      // reports a nearer entry point.
+      const headshot = rayHitsHead(origin, ux, uy, uz, t, maxDist);
+
       out.push({
-        target: t, dist: hit,
-        headshot: y > t.pos.y + t.height * 0.78,
-        point: { x: origin.x + ux * hit, y, z: origin.z + uz * hit },
+        target: t, dist: headshot ? Math.min(hit, headshot) : hit,
+        headshot: !!headshot,
+        point: {
+          x: origin.x + ux * (headshot || hit),
+          y: origin.y + uy * (headshot || hit),
+          z: origin.z + uz * (headshot || hit),
+        },
       });
     };
     for (const e of this.enemies) consider(e);
     if (this.boss) consider(this.boss);
     out.sort((a2, b2) => a2.dist - b2.dist);
     return out;
+  }
+
+  /** Is this world point inside the target's head volume? */
+  _isHeadHit(target, x, y, z) {
+    const hy = target.headY ? target.headY() : target.pos.y + target.height * 0.85;
+    const r = (target.headRadius ?? target.height * 0.13) + 0.1;
+    const dx = x - target.pos.x, dz = z - target.pos.z, dy = y - hy;
+    return dx * dx + dy * dy + dz * dz <= r * r;
   }
 
   _targetsInCone(origin, dir, range, arc) {
@@ -1072,7 +1103,8 @@ class Game {
     if (!p.hurt(amount, source)) return false;
     if (!silent) {
       audio.hurt();
-      this.hud.screenFlash(0.24);
+      this.hud.screenFlash(0.18);
+      this.hurtFlash = Math.min(1, (this.hurtFlash ?? 0) + 0.3 + amount * 0.005);
     }
     return true;
   }
@@ -1263,6 +1295,7 @@ class Game {
         const vlen = Math.hypot(p.vx, p.vy, p.vz) || 1;
         this.runtime.applyHit(this._weaponCtx(), weapon, eff, target, p.damage, {
           ux: p.vx / vlen, uy: p.vy / vlen, uz: p.vz / vlen,
+          headshot: this._isHeadHit(target, p.x, p.y, p.z),
           point: { x: p.x, y: p.y, z: p.z },
         });
         // Ricocheting blades keep going; pierce rounds keep going until spent.
@@ -1650,7 +1683,7 @@ class Game {
       this.chestLight.dispose?.();
       this.chestLight = null;
     }
-    this._lightRamp = { t: 0, ambient: cfg.ambient * 3.1, hemi: 1.5, fog: cfg.palette.fogDensity };
+    this._lightRamp = { t: 0, ambient: cfg.ambient * 2.0, hemi: 0.9, fog: cfg.palette.fogDensity };
     this._queue(STORY.welcome, true);
     this.hud.banner('COLD STORAGE', 'SUBLEVEL B1', 3.4);
     this._populate(cfg, this.rng, 7);
@@ -1914,7 +1947,7 @@ class Game {
 
   _updateLights(dt) {
     this._lightTimer -= dt;
-    this.torch.intensity = damp(this.torch.intensity, this.prologueActive ? 0.5 : 4.2, 1.6, dt);
+    this.torch.intensity = damp(this.torch.intensity, this.prologueActive ? 0.6 : 3.6, 1.6, dt);
 
     // Bring the room up after the cold open resolves.
     if (this._lightRamp) {
@@ -1950,6 +1983,15 @@ class Game {
 
   // ---- story ----
 
+  /**
+   * Seconds until the next unprompted line. Roughly 40s in the basement and
+   * five minutes by Root, so his absence becomes noticeable on its own.
+   */
+  _ambientGap() {
+    const base = 34 + this.floorIndex * 25;
+    return base + Math.random() * (18 + this.floorIndex * 6);
+  }
+
   _queue(lines, priority = false, quiet = false) {
     if (!lines || !lines.length) return;
     const items = lines.map((l) => (typeof l === 'string' ? { speaker: 'KIMVATCH', text: l, hold: 4 } : l));
@@ -1968,6 +2010,7 @@ class Game {
       this.glitchFired = true;
       this._queue(STORY.glitchEvent, true);
       this.hud.glitchBurst(2.2);
+      this.glitchFx = 1;
       audio.glitch(2);
       this.player.shake = 1.2;
     }
@@ -1977,16 +2020,23 @@ class Game {
     }
     if (this.player.health < this.player.maxHealth * 0.25 && this.now - (this._lastLowHp || -99) > 45) {
       this._lastLowHp = this.now;
-      this._queue([STORY.lowHealth[(Math.random() * STORY.lowHealth.length) | 0]], true);
+      const nags = this.floorIndex >= 7 ? STORY.lowHealthLate : STORY.lowHealth;
+      this._queue([nags[(Math.random() * nags.length) | 0]], true);
     }
 
-    // Ambient chatter
+    // Ambient chatter. The doctor talks constantly in the basement and barely
+    // at all near the top — the widening gap is the character arc.
     this.ambientTimer -= dt;
     if (this.ambientTimer <= 0 && !this.dialogueQueue.length && !this.currentLine) {
-      this.ambientTimer = 44 + Math.random() * 40;
+      this.ambientTimer = this._ambientGap();
       const pool = this.ambientPools.get(this.floorIndex);
       const line = pool?.next(Math.random);
-      if (line) this._queue([line]);
+      // On the upper floors he sometimes simply doesn't answer.
+      const silentChance = clamp((this.floorIndex - 5) * 0.11, 0, 0.5);
+      if (line && Math.random() >= silentChance) this._queue([line]);
+      else if (this.floorIndex >= 7 && Math.random() < 0.4) {
+        this._queue([STORY.silence[(Math.random() * STORY.silence.length) | 0]]);
+      }
     }
 
     // Playback
@@ -2003,11 +2053,12 @@ class Game {
     this.currentLine = line;
     this.dialogueTimer = line.hold ?? Math.max(2.6, line.text.length * 0.045);
     const cls = {
-      KIMVATCH: '', SYSTEM: 'system', GLITCH: 'glitch', BOSS: 'boss', SELF: 'self', CAST: 'boss',
+      KIMVATCH: '', COLD: 'cold', SYSTEM: 'system', GLITCH: 'glitch',
+      BOSS: 'boss', SELF: 'self', CAST: 'boss',
     }[line.speaker] ?? '';
     const label = {
-      KIMVATCH: 'DR. KIMVATCH', SYSTEM: 'POD SYSTEM', GLITCH: '/// ERROR ///',
-      BOSS: '', SELF: 'MICHAEL SANDLOR', CAST: '',
+      KIMVATCH: 'DR. KIMVATCH', COLD: 'DR. KIMVATCH', SYSTEM: 'POD SYSTEM',
+      GLITCH: '/// ERROR ///', BOSS: '', SELF: 'MICHAEL SANDLOR', CAST: '',
     }[line.speaker] ?? 'DR. KIMVATCH';
     // Boss lines carry their own speaker prefix; split it out for the label.
     let text = line.text;
@@ -2018,8 +2069,14 @@ class Game {
       text = text.slice(i + 1).trim();
     }
     this.hud.intercom(speaker, text, cls);
-    if (line.speaker === 'GLITCH') { audio.glitch(1); this.hud.glitchBurst(0.5); }
-    else audio.radioBlip();
+    if (line.speaker === 'GLITCH') {
+      audio.glitch(1); this.hud.glitchBurst(0.5);
+      this.glitchFx = Math.max(this.glitchFx ?? 0, 0.85);
+    } else if (line.speaker === 'COLD') {
+      audio.radioBlip(0.45);
+    } else {
+      audio.radioBlip();
+    }
   }
 
   // ---- hud ----
@@ -2043,7 +2100,13 @@ class Game {
     this.hud.setStats(p.shards, this.runTime, p.stats.kills);
     this.hud.setLoadout(p, this.runtime);
     this.hud.setBoss(this.boss && this.boss.alive ? this.boss : null);
-    this.hud.setDamageVignette(clamp(1 - p.health / (p.maxHealth * 0.45), 0, 1) * 0.85);
+    // Low health and fresh hits both bleed into the composite pass.
+    const lowHp = clamp(1 - p.health / (p.maxHealth * 0.42), 0, 1);
+    this.hurtFlash = Math.max((this.hurtFlash ?? 0) - dt * 3.2, lowHp * 0.75);
+    this.post.set('hurt', clamp(this.hurtFlash, 0, 1));
+    this.glitchFx = Math.max(0, (this.glitchFx ?? 0) - dt * 1.4);
+    this.post.set('glitch', clamp(this.glitchFx, 0, 1));
+    this.hud.setDamageVignette(lowHp * 0.4);
     this._updateObjectiveHud();
     this.damageNumbers.update(dt, this.vw, this.vh);
 
@@ -2217,13 +2280,39 @@ class Game {
 
   render() {
     this.renderer.info.reset();
-    this.renderer.clear();
-    this.renderer.render(this.scene, this.camera);
-    if (this.state === 'playing' || this.state === 'paused') {
-      this.renderer.clearDepth();
-      this.renderer.render(this.vmScene, this.vmCamera);
-    }
+    const drawWorld = (target) => {
+      this.renderer.setRenderTarget(target);
+      this.renderer.clear();
+      this.renderer.render(this.scene, this.camera);
+      if (this.state === 'playing' || this.state === 'paused') {
+        this.renderer.clearDepth();
+        this.renderer.render(this.vmScene, this.vmCamera);
+      }
+    };
+    this.post.render(drawWorld, this.now);
+    this.renderer.setRenderTarget(null);
   }
+}
+
+/**
+ * Ray vs. the target's head sphere. Returns the hit distance, or 0 for a miss
+ * (0 is never a real hit here — the muzzle is always outside the head).
+ */
+function rayHitsHead(origin, ux, uy, uz, target, maxDist) {
+  const hy = target.headY ? target.headY() : target.pos.y + target.height * 0.85;
+  const r = (target.headRadius ?? target.height * 0.13) + 0.08;
+  const ex = origin.x - target.pos.x;
+  const ey = origin.y - hy;
+  const ez = origin.z - target.pos.z;
+  const b = 2 * (ex * ux + ey * uy + ez * uz);
+  const c = ex * ex + ey * ey + ez * ez - r * r;
+  const disc = b * b - 4 * c;
+  if (disc < 0) return 0;
+  const sq = Math.sqrt(disc);
+  let t = (-b - sq) / 2;
+  if (t < 0) t = (-b + sq) / 2;
+  if (t < 0 || t > maxDist) return 0;
+  return t;
 }
 
 window.addEventListener('DOMContentLoaded', () => {

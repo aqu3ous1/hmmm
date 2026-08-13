@@ -9,7 +9,8 @@ Pod 9001**. You wake in the dark with one chest lit in front of you. Eleven
 floors later you find out what that word — beta — was standing in front of.
 
 Runs in any modern browser. No build step, no network calls, no asset files:
-every mesh, every sound, and every level is generated at runtime.
+every mesh, every sound, every level and the whole post-processing chain are
+generated at runtime from the three.js core.
 
 ---
 
@@ -70,6 +71,12 @@ the game.
 you finish the floor's objective — power panels, cooling valves, house chips,
 session badges. Engaging a panel starts a Zombies-style holdout: several waves
 of enemies before it locks in. Then the seal drops and something is waiting.
+
+**Headshots pay.** Every enemy and boss carries a head hitbox taken straight
+from its model. Landing one is 2.5x on most weapons, 3.2x on the Desert Eagle
+and 3x on the Actuary — with its own sound, its own spray, and its own callout,
+so you never have to read a number to know you got it. The Actuarial Table
+synergy adds another 60% on top.
 
 **Shards are the currency.** Kills pay out. Vend-o-Trons sell ammo, medical
 patches, and a re-roll of whatever is in your active hand — prices climb each
@@ -154,11 +161,11 @@ src/
   entities/         player controller, enemy AI + flow-field pathing, bosses
   combat/           weapon data, synergy resolution, firing runtime, projectiles
   props/            the chest and its slot-machine reveal
-  render/           every mesh in the game, built from primitives
+  render/           every mesh in the game + the post-processing chain
   fx/               particles, rings, tracers, damage numbers
   story/            Dr. Kimvatch's script and the floor beats
   ui/               HUD bindings, codex, loadout panel
-tools/              headless smoke test + perf probe
+tools/              headless smoke test, visual probes, perf probe
 ```
 
 Some notes on how it works, in case you want to poke at it:
@@ -171,6 +178,19 @@ Some notes on how it works, in case you want to poke at it:
 - **Weapons** keep their special behaviour in a `traits` list rather than in
   closures, which lets the synergy layer rewrite stats and add or remove traits
   without any weapon knowing that happened.
+- **Rendering** goes through a hand-written post chain (`src/render/postfx.js`):
+  the scene draws into an HDR target, a three-level bloom ladder picks up
+  everything emissive, and one composite pass does ACES tonemapping, per-floor
+  colour grading, vignette, chromatic aberration, grain and scanlines. The
+  damage response and the story's glitch beats are uniforms on that pass.
+- **Level surfaces** are emitted as individual quads carrying baked per-corner
+  ambient occlusion in their vertex colours, and only the wall faces that
+  actually front open space are built at all — fewer triangles than boxes, and
+  far more depth.
+- **Every enemy and boss is modelled individually** rather than from a shared
+  humanoid template, because silhouette is the only thing that reads at combat
+  distance. Each model also declares where its head is, and the headshot test
+  uses that volume directly.
 - **Audio** is entirely synthesised: gunshots are filtered noise bursts shaped
   per weapon, and the score is a scheduled arpeggiator whose scale, tempo and
   timbre come from the floor config, with density that rises as enemies close in.
@@ -188,8 +208,9 @@ Boots the game in headless Chromium, opens the prologue chest through the real
 interaction path, then plays every floor: fights with whatever the chests hand
 it, force-completes each objective, spins both chests, triggers every attack
 pattern of every boss, kills it, and rides the lift up. It fails on any console
-error or page exception, asserts the bot actually kills things on each floor,
-and checks that all 24 synergy rules resolve to finite stats.
+error or page exception, checks that all 24 synergy rules resolve to finite
+stats, and verifies that aiming at a head does meaningfully more damage than
+aiming at a torso.
 
 `--shots` writes screenshots to `tools/shots/`.
 
@@ -198,7 +219,11 @@ Two more probes, for looking at things rather than asserting on them:
 ```bash
 node tools/look.mjs --all                 # one screenshot per floor
 node tools/look.mjs --floor 4 --weapon nimbo
+node tools/look.mjs --floor 2 --raw       # same frame with post-processing off
+node tools/lineup.mjs                     # every enemy side by side
+node tools/lineup.mjs --bosses --from 5 --count 5
 node tools/vm.mjs behemoth                # one weapon's viewmodel, isolated
+node tools/pick.mjs 4                     # what mesh is under these screen points
 node tools/perf.mjs                       # draw calls, triangles, frame timing
 ```
 

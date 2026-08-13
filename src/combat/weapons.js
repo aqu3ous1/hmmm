@@ -70,12 +70,12 @@ export const WEAPONS = {
   }),
 
   deagle: W({
-    id: 'deagle', name: 'Desert Eagle', rarity: 2,
+    id: 'deagle', name: 'Desert Eagle', rarity: 2, headMult: 3.2,
     damage: 74, fireRate: 2.6, magSize: 7, reserve: 84, reload: 1.7,
     spread: 0.012, recoil: 2.6, knockback: 9, critChance: 0.16, critMult: 2.6, auto: false,
     desc: 'Seven chances to be extremely correct.',
     flavor: 'The recoil is simulated with what Kimvatch calls "malicious accuracy".',
-    tip: 'Headshots pay double. Missing costs a full second of your life.',
+    tip: 'Headshots pay 3.2x. Missing costs a full second of your life.',
     sound: { body: 1500, punch: 1.4, tail: 0.26, pitch: 190, tone: 'sawtooth', volume: 0.85 },
   }),
 
@@ -218,6 +218,7 @@ export const WEAPONS = {
     spread: 0, range: 120, recoil: 2.2, knockback: 12, auto: false,
     critChance: 0.25, critMult: 2.4,
     tags: ['energy', 'precision'],
+    headMult: 3.0,
     traits: ['charge', 'pierce'], params: { chargeTime: 0.85, chargeMult: 2.6, pierce: 99 },
     desc: 'Calculates the exact amount of damage required, then adds a margin.',
     flavor: 'It does not fire until it is certain. It is always certain eventually.',

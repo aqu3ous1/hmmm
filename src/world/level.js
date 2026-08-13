@@ -5,7 +5,7 @@
 // odd room shapes all behave identically without any special-case geometry.
 
 import * as THREE from '../../vendor/three.module.js';
-import { UNIT, xform, mergeGeometries, disposeTree } from './geometry.js';
+import { UNIT, xform, mergeGeometries, disposeTree, quad, paint } from './geometry.js';
 import { clamp } from '../core/util.js';
 
 export const CELL = 2.4;
@@ -13,6 +13,24 @@ export const WALL_H = 4.6;
 export const GRID = 112;
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+const _shadeColor = new THREE.Color();
+/** A darkened copy of a palette colour. */
+function shade(hex, amount) {
+  return _shadeColor.setHex(hex).multiplyScalar(amount).getHex();
+}
+
+/**
+ * Palette entries are authored for mood, not for reflectance — most are so dark
+ * that a physically-lit surface has nothing to return. This lifts a colour to a
+ * usable albedo while keeping its hue, so the floor still reads as "that floor".
+ */
+function albedo(hex, k = 2.2) {
+  const c = _shadeColor.setHex(hex);
+  const max = Math.max(c.r, c.g, c.b);
+  const scale = max > 0.001 ? Math.min(k, 0.46 / max) : k;
+  return c.multiplyScalar(Math.max(1, scale)).getHex();
+}
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -340,106 +358,293 @@ export class Level {
   // -- construction --
 
   _build() {
-    const pal = this.cfg.palette;
-    const grid = this.grid;
-    const open = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && grid[x + z * GRID] === 0;
-
-    const floorA = [], floorB = [], ceil = [], wallMatrices = [], trims = [];
-
-    for (let cz = 0; cz < GRID; cz++) {
-      for (let cx = 0; cx < GRID; cx++) {
-        const wx = this.cellToWorldX(cx) + CELL / 2;
-        const wz = this.cellToWorldZ(cz) + CELL / 2;
-        if (open(cx, cz)) {
-          const tile = xform(UNIT.plane, { x: wx, y: 0, z: wz, rx: -Math.PI / 2, sx: CELL, sy: CELL });
-          ((cx + cz) & 1 ? floorA : floorB).push(tile);
-          ceil.push(xform(UNIT.plane, { x: wx, y: WALL_H, z: wz, rx: Math.PI / 2, sx: CELL, sy: CELL }));
-        } else {
-          // Only build wall blocks that actually face open space.
-          let exposed = false;
-          for (let j = -1; j <= 1 && !exposed; j++) {
-            for (let i = -1; i <= 1; i++) {
-              if ((i || j) && open(cx + i, cz + j)) { exposed = true; break; }
-            }
-          }
-          if (!exposed) continue;
-          const m = new THREE.Matrix4();
-          m.makeScale(CELL, WALL_H, CELL);
-          m.setPosition(wx, WALL_H / 2, wz);
-          wallMatrices.push(m);
-
-          // Emissive skirting on faces that touch a walkable tile.
-          for (const [dx, dz] of DIRS) {
-            if (!open(cx + dx, cz + dz)) continue;
-            const ox = dx * (CELL / 2 + 0.02), oz = dz * (CELL / 2 + 0.02);
-            trims.push(xform(UNIT.box, {
-              x: wx + ox, y: 0.14, z: wz + oz,
-              sx: dx ? 0.06 : CELL, sy: 0.1, sz: dz ? 0.06 : CELL,
-            }));
-            trims.push(xform(UNIT.box, {
-              x: wx + ox, y: WALL_H - 0.22, z: wz + oz,
-              sx: dx ? 0.06 : CELL, sy: 0.06, sz: dz ? 0.06 : CELL,
-            }));
-          }
-        }
-      }
-    }
-
-    // A touch of self-illumination keeps surfaces from crushing to pure black in
-    // the fog — the Pod is a screen-lit place, not a cave.
-    const _c = new THREE.Color();
-    const selfLit = (hex, amount = 0.22) => _c.setHex(hex).multiplyScalar(amount).getHex();
-    const lambert = (color, extra = {}) => new THREE.MeshLambertMaterial({
-      color, emissive: selfLit(color), ...extra,
-    });
-
-    if (floorA.length) {
-      this.group.add(new THREE.Mesh(mergeGeometries(floorA), lambert(pal.floor)));
-    }
-    if (floorB.length) {
-      this.group.add(new THREE.Mesh(mergeGeometries(floorB), lambert(pal.floorAccent)));
-    }
-    if (ceil.length) {
-      this.group.add(new THREE.Mesh(mergeGeometries(ceil), lambert(pal.ceiling)));
-    }
-    if (trims.length) {
-      this.group.add(new THREE.Mesh(
-        mergeGeometries(trims),
-        new THREE.MeshBasicMaterial({ color: pal.trim, transparent: true, opacity: 0.75 }),
-      ));
-    }
-
-    if (wallMatrices.length) {
-      const wallMat = this.cfg.palette.wireframe
-        ? new THREE.MeshBasicMaterial({ color: pal.wall, wireframe: true })
-        : new THREE.MeshLambertMaterial({
-          color: pal.wall, emissive: selfLit(pal.wall, 0.3), flatShading: true,
-        });
-      // Clone the shared unit box — this mesh is disposed on floor change, and
-      // disposing the cached primitive would drag every other user down with it.
-      const inst = new THREE.InstancedMesh(UNIT.box.clone(), wallMat, wallMatrices.length);
-      const col = new THREE.Color();
-      const base = new THREE.Color(pal.wall);
-      const accent = new THREE.Color(pal.wallAccent);
-      for (let i = 0; i < wallMatrices.length; i++) {
-        inst.setMatrixAt(i, wallMatrices[i]);
-        col.copy(base).lerp(accent, this.rng() * 0.75);
-        inst.setColorAt(i, col);
-      }
-      inst.instanceMatrix.needsUpdate = true;
-      if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-      inst.frustumCulled = false;
-      this.group.add(inst);
-      this.wallMesh = inst;
-    }
-
+    this._bakeAO();
+    this._buildSurfaces();
+    this._buildArchitecture();
     this._buildCeilingLights();
     this._buildProps();
   }
 
+  // -- ambient occlusion ---------------------------------------------------
+
+  /**
+   * Per-grid-corner occlusion, baked once and read back as vertex colours.
+   * A corner touches four cells; the more of them are solid, the darker it is.
+   * This one pass is what stops the level reading as flat coloured boxes.
+   */
+  _bakeAO() {
+    const n = GRID + 1;
+    this.ao = new Float32Array(n * n);
+    const solid = (x, z) => (this.isSolidCell(x, z) ? 1 : 0);
+    for (let cz = 0; cz <= GRID; cz++) {
+      for (let cx = 0; cx <= GRID; cx++) {
+        const around = solid(cx - 1, cz - 1) + solid(cx, cz - 1) + solid(cx - 1, cz) + solid(cx, cz);
+        // A corner poking into open space stays bright; a corner buried in
+        // geometry goes dark, with the diagonal case pulled down further.
+        let a = 1 - around * 0.3;
+        if (around === 2 && solid(cx - 1, cz - 1) === solid(cx, cz)) a -= 0.1;
+        this.ao[cx + cz * n] = clamp(a, 0.18, 1);
+      }
+    }
+  }
+
+  aoAt(cx, cz) {
+    const n = GRID + 1;
+    if (cx < 0 || cz < 0 || cx > GRID || cz > GRID) return 0.42;
+    return this.ao[cx + cz * n];
+  }
+
+  /** Deterministic per-cell noise so panels and tiles vary without a texture. */
+  _cellHash(cx, cz, salt = 0) {
+    let h = (cx * 374761393 + cz * 668265263 + salt * 2246822519) | 0;
+    h = (h ^ (h >>> 13)) * 1274126177;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  // -- floors, ceilings, walls --------------------------------------------
+
+  _buildSurfaces() {
+    const pal = this.cfg.palette;
+    const grid = this.grid;
+    const open = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && grid[x + z * GRID] === 0;
+
+    const floorGeo = [], ceilGeo = [], wallGeo = [], trimGeo = [], decalGeo = [];
+
+    const wx = (cx) => this.cellToWorldX(cx);
+    const wz = (cz) => this.cellToWorldZ(cz);
+
+    for (let cz = 0; cz < GRID; cz++) {
+      for (let cx = 0; cx < GRID; cx++) {
+        const x0 = wx(cx), x1 = x0 + CELL;
+        const z0 = wz(cz), z1 = z0 + CELL;
+
+        if (open(cx, cz)) {
+          // --- floor tile, shaded from its four corners ---
+          const a = this.aoAt(cx, cz), b = this.aoAt(cx + 1, cz);
+          const c = this.aoAt(cx + 1, cz + 1), d = this.aoAt(cx, cz + 1);
+          // Wound so the normal points up — reverse this and the tile is a
+          // back face, gets culled, and you see straight through the world.
+          const v = 0.82 + this._cellHash(cx, cz, 3) * 0.26;
+          floorGeo.push(quad(
+            [x0, 0, z1], [x1, 0, z1], [x1, 0, z0], [x0, 0, z0],
+            [d * v, c * v, b * v, a * v],
+          ));
+
+          // --- ceiling tile: same trick, normal pointing down ---
+          const cv = 0.5 + this._cellHash(cx, cz, 7) * 0.1;
+          ceilGeo.push(quad(
+            [x0, WALL_H, z0], [x1, WALL_H, z0], [x1, WALL_H, z1], [x0, WALL_H, z1],
+            [a * cv, b * cv, c * cv, d * cv],
+          ));
+          continue;
+        }
+
+        // --- wall faces: only the sides that actually front open space ---
+        for (const [dx, dz] of DIRS) {
+          if (!open(cx + dx, cz + dz)) continue;
+
+          // Corners of this face at floor level, ordered so the quad faces out.
+          let p0, p1, ca, cb;
+          if (dx === 1) {
+            p0 = [x1, 0, z1]; p1 = [x1, 0, z0];
+            ca = this.aoAt(cx + 1, cz + 1); cb = this.aoAt(cx + 1, cz);
+          } else if (dx === -1) {
+            p0 = [x0, 0, z0]; p1 = [x0, 0, z1];
+            ca = this.aoAt(cx, cz); cb = this.aoAt(cx, cz + 1);
+          } else if (dz === 1) {
+            p0 = [x0, 0, z1]; p1 = [x1, 0, z1];
+            ca = this.aoAt(cx, cz + 1); cb = this.aoAt(cx + 1, cz + 1);
+          } else {
+            p0 = [x1, 0, z0]; p1 = [x0, 0, z0];
+            ca = this.aoAt(cx + 1, cz); cb = this.aoAt(cx, cz);
+          }
+
+          // Inside corners: darken an edge whose neighbour along the face also
+          // sticks out into the room.
+          const side = dx ? [0, 1] : [1, 0];
+          if (this.isSolidCell(cx - side[0], cz - side[1]) && open(cx + dx - side[0], cz + dz - side[1])) ca *= 0.82;
+          if (this.isSolidCell(cx + side[0], cz + side[1]) && open(cx + dx + side[0], cz + dz + side[1])) cb *= 0.82;
+
+          const tone = 0.86 + this._cellHash(cx, cz, dx * 5 + dz * 11) * 0.28;
+          // Three stacked bands give the wall a vertical gradient — dark at the
+          // skirting, brightest at eye level, falling off into the ceiling.
+          const bands = [
+            [0, 0.42, 0.36, 0.82],
+            [0.42, WALL_H - 0.9, 0.82, 1.0],
+            [WALL_H - 0.9, WALL_H, 1.0, 0.46],
+          ];
+          for (const [yLo, yHi, sLo, sHi] of bands) {
+            wallGeo.push(quad(
+              [p0[0], yLo, p0[2]], [p1[0], yLo, p1[2]],
+              [p1[0], yHi, p1[2]], [p0[0], yHi, p0[2]],
+              [ca * sLo * tone, cb * sLo * tone, cb * sHi * tone, ca * sHi * tone],
+            ));
+          }
+
+          // Emissive skirting and a cornice line.
+          const nx = dx * 0.012, nz = dz * 0.012;
+          const strip = (yLo, yHi, shade) => trimGeo.push(quad(
+            [p0[0] + nx, yLo, p0[2] + nz], [p1[0] + nx, yLo, p1[2] + nz],
+            [p1[0] + nx, yHi, p1[2] + nz], [p0[0] + nx, yHi, p0[2] + nz],
+            [shade, shade, shade, shade],
+          ));
+          strip(0.10, 0.20, 1);
+          strip(WALL_H - 0.32, WALL_H - 0.26, 0.7);
+        }
+      }
+    }
+
+    // Floor markings: a ring at the middle of every room, so rooms read as
+    // places rather than as identical boxes.
+    for (const room of this.rooms) {
+      const cxw = this.cellToWorldX(room.cx), czw = this.cellToWorldZ(room.cz);
+      const rad = Math.min(room.w, room.h) * CELL * 0.3;
+      const seg = 28;
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        if (i % 4 === 3) continue;  // dashed
+        const r0 = rad, r1 = rad + 0.16;
+        decalGeo.push(quad(
+          [cxw + Math.cos(a0) * r1, 0.02, czw + Math.sin(a0) * r1],
+          [cxw + Math.cos(a1) * r1, 0.02, czw + Math.sin(a1) * r1],
+          [cxw + Math.cos(a1) * r0, 0.02, czw + Math.sin(a1) * r0],
+          [cxw + Math.cos(a0) * r0, 0.02, czw + Math.sin(a0) * r0],
+          [1, 1, 1, 1],
+        ));
+      }
+    }
+
+    const wire = !!pal.wireframe;
+    if (floorGeo.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(floorGeo), new THREE.MeshLambertMaterial({
+        color: albedo(pal.floor, 2.4), vertexColors: true,
+      })));
+    }
+    if (ceilGeo.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(ceilGeo), new THREE.MeshLambertMaterial({
+        color: albedo(pal.ceiling, 2.0), vertexColors: true,
+      })));
+    }
+    if (wallGeo.length) {
+      const mat = wire
+        ? new THREE.MeshBasicMaterial({ color: pal.wall, wireframe: true, vertexColors: true })
+        : new THREE.MeshLambertMaterial({
+          color: albedo(pal.wall, 2.6), vertexColors: true,
+        });
+      const mesh = new THREE.Mesh(mergeGeometries(wallGeo), mat);
+      mesh.frustumCulled = false;
+      this.group.add(mesh);
+      this.wallMesh = mesh;
+    }
+    if (trimGeo.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(trimGeo), new THREE.MeshBasicMaterial({
+        color: pal.trim, vertexColors: true, transparent: true, opacity: 0.92,
+      })));
+    }
+    if (decalGeo.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(decalGeo), new THREE.MeshBasicMaterial({
+        color: pal.trim, transparent: true, opacity: 0.22, depthWrite: false,
+      })));
+    }
+  }
+
+  // -- doorways, columns, ceiling beams -----------------------------------
+
+  _buildArchitecture() {
+    const pal = this.cfg.palette;
+    const open = (x, z) => !this.isSolidCell(x, z);
+    const solidParts = [], glowParts = [];
+    const push = (arr, geo, o, sh) => arr.push(paint(xform(geo, o), sh));
+
+    // Door frames wherever an open cell is pinched between two walls — that is
+    // exactly where a corridor meets a room, without needing to track it.
+    for (let cz = 1; cz < GRID - 1; cz++) {
+      for (let cx = 1; cx < GRID - 1; cx++) {
+        if (!open(cx, cz)) continue;
+        const ew = !open(cx - 1, cz), ee = !open(cx + 1, cz);
+        const nn = !open(cx, cz - 1), ns = !open(cx, cz + 1);
+        const horiz = ew && ee && open(cx, cz - 1) && open(cx, cz + 1);
+        const vert = nn && ns && open(cx - 1, cz) && open(cx + 1, cz);
+        if (!horiz && !vert) continue;
+        // Only the middle of a run, so a 3-wide corridor gets one frame.
+        if (horiz && !(open(cx, cz - 1) && !open(cx - 1, cz - 1))) { /* keep */ }
+        const x = this.cellToWorldX(cx) + CELL / 2;
+        const z = this.cellToWorldZ(cz) + CELL / 2;
+        const ry = horiz ? 0 : Math.PI / 2;
+        const half = CELL / 2;
+        for (const s of [-1, 1]) {
+          push(solidParts, UNIT.box, {
+            x: x + (horiz ? s * half : 0), y: WALL_H / 2, z: z + (horiz ? 0 : s * half),
+            ry, sx: horiz ? 0.3 : CELL * 1.02, sy: WALL_H, sz: horiz ? CELL * 1.02 : 0.3,
+          }, 0.7);
+        }
+        push(solidParts, UNIT.box, {
+          x, y: WALL_H - 0.42, z, sx: horiz ? CELL * 1.05 : CELL * 1.05, sy: 0.7, sz: CELL * 1.05,
+        }, 0.85);
+        push(glowParts, UNIT.box, {
+          x, y: WALL_H - 0.78, z,
+          sx: horiz ? CELL * 0.9 : 0.09, sy: 0.07, sz: horiz ? 0.09 : CELL * 0.9,
+        }, 1);
+      }
+    }
+
+    // Ceiling beams across rooms, and hanging conduits along their length.
+    for (const room of this.rooms) {
+      const spanX = room.w >= room.h;
+      const count = Math.max(1, Math.floor((spanX ? room.h : room.w) / 4));
+      for (let i = 0; i < count; i++) {
+        const t = (i + 0.5) / count;
+        if (spanX) {
+          const z = this.cellToWorldZ(room.z + t * room.h);
+          const x = this.cellToWorldX(room.cx);
+          push(solidParts, UNIT.box, {
+            x, y: WALL_H - 0.22, z, sx: room.w * CELL * 0.98, sy: 0.34, sz: 0.44,
+          }, 0.72);
+          push(solidParts, UNIT.lowCyl, {
+            x, y: WALL_H - 0.55, z, rz: Math.PI / 2, sx: 0.16, sy: room.w * CELL * 0.8, sz: 0.16,
+          }, 0.6);
+        } else {
+          const x = this.cellToWorldX(room.x + t * room.w);
+          const z = this.cellToWorldZ(room.cz);
+          push(solidParts, UNIT.box, {
+            x, y: WALL_H - 0.22, z, sx: 0.44, sy: 0.34, sz: room.h * CELL * 0.98,
+          }, 0.72);
+          push(solidParts, UNIT.lowCyl, {
+            x, y: WALL_H - 0.55, z, rx: Math.PI / 2, sx: 0.16, sy: room.h * CELL * 0.8, sz: 0.16,
+          }, 0.6);
+        }
+      }
+
+      // Corner columns in the larger rooms.
+      if (room.w * room.h >= 90) {
+        const inset = 1.4;
+        for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+          const x = this.cellToWorldX(room.cx + sx * (room.w / 2 - inset));
+          const z = this.cellToWorldZ(room.cz + sz * (room.h / 2 - inset));
+          if (this.isSolidAt(x, z)) continue;
+          push(solidParts, UNIT.lowCyl, { x, y: WALL_H / 2, z, sx: 0.6, sy: WALL_H, sz: 0.6 }, 0.78);
+          push(solidParts, UNIT.lowCyl, { x, y: 0.2, z, sx: 0.9, sy: 0.4, sz: 0.9 }, 0.6);
+          push(solidParts, UNIT.lowCyl, { x, y: WALL_H - 0.2, z, sx: 0.9, sy: 0.4, sz: 0.9 }, 0.7);
+          push(glowParts, UNIT.box, { x, y: 1.5, z, sx: 0.63, sy: 0.06, sz: 0.63 }, 1);
+        }
+      }
+    }
+
+    if (solidParts.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(solidParts), new THREE.MeshLambertMaterial({
+        color: albedo(pal.wallAccent, 2.0), vertexColors: true, flatShading: true,
+      })));
+    }
+    if (glowParts.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(glowParts), new THREE.MeshBasicMaterial({
+        color: pal.emissive, vertexColors: true, transparent: true, opacity: 0.9,
+      })));
+    }
+  }
+
   _buildCeilingLights() {
     const pal = this.cfg.palette;
-    const panels = [];
+    const panels = [], housings = [];
     for (const r of this.rooms) {
       const nx = Math.max(1, Math.floor(r.w / 5));
       const nz = Math.max(1, Math.floor(r.h / 5));
@@ -447,134 +652,244 @@ export class Level {
         for (let i = 0; i < nx; i++) {
           const cx = r.x + (i + 0.5) * (r.w / nx);
           const cz = r.z + (j + 0.5) * (r.h / nz);
-          const wx = this.cellToWorldX(cx), wz = this.cellToWorldZ(cz);
-          if (this.isSolidAt(wx, wz)) continue;
-          panels.push(xform(UNIT.plane, {
-            x: wx, y: WALL_H - 0.06, z: wz, rx: Math.PI / 2, sx: 2.4, sy: 1.0,
-          }));
-          this.lightPoints.push({ x: wx, y: WALL_H - 0.5, z: wz, room: r.id });
+          const x = this.cellToWorldX(cx), z = this.cellToWorldZ(cz);
+          if (this.isSolidAt(x, z)) continue;
+          panels.push(paint(xform(UNIT.plane, {
+            x, y: WALL_H - 0.66, z, rx: Math.PI / 2, sx: 2.3, sy: 0.85,
+          }), 1));
+          housings.push(paint(xform(UNIT.box, {
+            x, y: WALL_H - 0.6, z, sx: 2.6, sy: 0.16, sz: 1.15,
+          }), 0.75));
+          this.lightPoints.push({ x, y: WALL_H - 0.8, z, room: r.id });
         }
       }
     }
     if (panels.length) {
-      const mesh = new THREE.Mesh(
-        mergeGeometries(panels),
-        new THREE.MeshBasicMaterial({ color: pal.light, transparent: true, opacity: 0.9 }),
-      );
-      this.group.add(mesh);
+      this.group.add(new THREE.Mesh(mergeGeometries(panels), new THREE.MeshBasicMaterial({
+        color: pal.light, transparent: true, opacity: 0.95,
+      })));
+      this.group.add(new THREE.Mesh(mergeGeometries(housings), new THREE.MeshLambertMaterial({
+        color: albedo(pal.wallAccent, 2.0), vertexColors: true, flatShading: true,
+      })));
     }
+  }
+
+  /** Open cells that touch a wall, with the outward direction — props look
+   *  deliberate when they are installed against something. */
+  _wallSpots(room) {
+    const spots = [];
+    for (let cz = room.z; cz < room.z + room.h; cz++) {
+      for (let cx = room.x; cx < room.x + room.w; cx++) {
+        if (this.isSolidCell(cx, cz)) continue;
+        for (const [dx, dz] of DIRS) {
+          if (!this.isSolidCell(cx + dx, cz + dz)) continue;
+          spots.push({
+            x: this.cellToWorldX(cx) + CELL / 2 - dx * 0.45,
+            z: this.cellToWorldZ(cz) + CELL / 2 - dz * 0.45,
+            ry: Math.atan2(-dx, -dz),
+          });
+          break;
+        }
+      }
+    }
+    return spots;
   }
 
   _buildProps() {
     const style = this.cfg.propStyle;
     const pal = this.cfg.palette;
     const rng = this.rng;
-    const solid = [], glow = [];
+    const body = [], accent = [], glow = [], dark = [];
 
-    const pushBox = (arr, o) => arr.push(xform(UNIT.box, o));
-    const pushCyl = (arr, o) => arr.push(xform(UNIT.lowCyl, o));
+    const B = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.box, o), sh));
+    const C = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.lowCyl, o), sh));
+    const S = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.lowSphere, o), sh));
+    const I = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.icosa, o), sh));
+    const N = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.cone, o), sh));
 
     for (const room of this.rooms) {
       if (room.type === 'spawn') continue;
-      const count = Math.floor((room.w * room.h) / 26) + rng.int(0, 2);
-      for (let i = 0; i < count; i++) {
-        const p = this.randomPointIn(room, rng, 2);
-        const rot = rng() * Math.PI * 2;
+      const wallSpots = rng.shuffle(this._wallSpots(room));
+      const wallCount = Math.min(wallSpots.length, Math.floor((room.w + room.h) / 3.2));
+      const freeCount = Math.floor((room.w * room.h) / 42);
+
+      // --- installations against the walls ---
+      for (let i = 0; i < wallCount; i++) {
+        const s = wallSpots[i];
+        const { x, z, ry } = s;
+        const fx = Math.sin(ry), fz = Math.cos(ry);   // outward from the wall
+
         switch (style) {
-          case 'crates': {
-            const s = rng.range(0.9, 1.5);
-            pushBox(solid, { x: p.x, y: s / 2, z: p.z, ry: rot, sx: s, sy: s, sz: s });
-            if (rng.chance(0.4)) pushBox(solid, { x: p.x + 0.2, y: s + s * 0.35, z: p.z, ry: rot + 0.4, sx: s * 0.7, sy: s * 0.7, sz: s * 0.7 });
+          case 'racks': {
+            const h = rng.range(2.6, 3.4);
+            B(body, { x, y: h / 2, z, ry, sx: 1.5, sy: h, sz: 0.75 }, 0.8);
+            B(dark, { x: x + fx * 0.4, y: h / 2, z: z + fz * 0.4, ry, sx: 1.34, sy: h - 0.2, sz: 0.06 }, 0.55);
+            for (let k = 0; k < 7; k++) {
+              const yy = 0.35 + k * (h - 0.6) / 6;
+              B(glow, { x: x + fx * 0.44, y: yy, z: z + fz * 0.44, ry, sx: 1.0, sy: 0.045, sz: 0.03 }, 1);
+              if (rng.chance(0.45)) {
+                B(glow, { x: x + fx * 0.44 - fz * 0.55, y: yy, z: z + fz * 0.44 + fx * 0.55, ry, sx: 0.07, sy: 0.07, sz: 0.03 }, 1);
+              }
+            }
+            B(accent, { x, y: h + 0.12, z, ry, sx: 1.6, sy: 0.2, sz: 0.85 }, 0.75);
             break;
           }
-          case 'racks': {
-            const h = rng.range(2.4, 3.4);
-            pushBox(solid, { x: p.x, y: h / 2, z: p.z, ry: rot, sx: 0.8, sy: h, sz: 2.2 });
-            for (let k = 0; k < 5; k++) {
-              glow.push(xform(UNIT.box, { x: p.x + Math.sin(rot) * 0.42, y: 0.5 + k * (h / 6), z: p.z + Math.cos(rot) * 0.42, ry: rot, sx: 0.05, sy: 0.06, sz: 1.6 }));
+          case 'crates': {
+            const stack = rng.int(1, 3);
+            for (let k = 0; k < stack; k++) {
+              const sz = rng.range(0.85, 1.25);
+              B(body, { x: x + (rng() - 0.5) * 0.3, y: sz / 2 + k * sz, z: z + (rng() - 0.5) * 0.3, ry: ry + rng.range(-0.3, 0.3), sx: sz, sy: sz, sz }, 0.85);
+              B(accent, { x, y: sz * 0.5 + k * sz, z: z + fz * 0.01, ry, sx: sz * 1.02, sy: 0.09, sz: sz * 1.02 }, 0.7);
             }
+            if (rng.chance(0.3)) B(glow, { x: x + fx * 0.5, y: 0.9, z: z + fz * 0.5, ry, sx: 0.26, sy: 0.16, sz: 0.02 }, 1);
             break;
           }
           case 'signs': {
-            const h = rng.range(2.2, 3.6);
-            pushCyl(solid, { x: p.x, y: h / 2, z: p.z, sx: 0.16, sy: h, sz: 0.16 });
-            glow.push(xform(UNIT.box, { x: p.x, y: h, z: p.z, ry: rot, sx: rng.range(1.2, 2.6), sy: rng.range(0.5, 1.1), sz: 0.08 }));
+            const h = rng.range(2.4, 3.8);
+            C(dark, { x, y: h / 2, z, sx: 0.14, sy: h, sz: 0.14 }, 0.45);
+            const w = rng.range(1.3, 2.8), sh2 = rng.range(0.55, 1.2);
+            B(dark, { x: x + fx * 0.12, y: h, z: z + fz * 0.12, ry, sx: w, sy: sh2, sz: 0.1 }, 0.4);
+            B(glow, { x: x + fx * 0.2, y: h, z: z + fz * 0.2, ry, sx: w - 0.16, sy: sh2 - 0.14, sz: 0.03 }, 1);
+            // tube outline
+            B(glow, { x: x + fx * 0.22, y: h + sh2 / 2 - 0.05, z: z + fz * 0.22, ry, sx: w, sy: 0.06, sz: 0.03 }, 1);
+            B(glow, { x: x + fx * 0.22, y: h - sh2 / 2 + 0.05, z: z + fz * 0.22, ry, sx: w, sy: 0.06, sz: 0.03 }, 1);
             break;
           }
           case 'tanks': {
-            const h = rng.range(2, 3.2);
-            pushCyl(solid, { x: p.x, y: h / 2, z: p.z, sx: 1.5, sy: h, sz: 1.5 });
-            glow.push(xform(UNIT.lowCyl, { x: p.x, y: h + 0.1, z: p.z, sx: 1.55, sy: 0.12, sz: 1.55 }));
+            const h = rng.range(2.2, 3.2);
+            C(dark, { x, y: 0.16, z, sx: 1.9, sy: 0.32, sz: 1.9 }, 0.5);
+            C(glow, { x, y: h / 2 + 0.2, z, sx: 1.5, sy: h, sz: 1.5 }, 0.55);
+            C(accent, { x, y: h + 0.3, z, sx: 1.85, sy: 0.28, sz: 1.85 }, 0.8);
+            C(dark, { x, y: h * 0.5, z, sx: 1.56, sy: h * 0.9, sz: 0.12 }, 0.5);
+            for (let k = 0; k < 3; k++) {
+              S(glow, { x: x + rng.range(-0.4, 0.4), y: 0.7 + k * 0.7, z: z + rng.range(-0.4, 0.4), sx: 0.18, sy: 0.18, sz: 0.18 }, 1);
+            }
+            C(dark, { x: x + fx * 0.9, y: h + 0.6, z: z + fz * 0.9, rx: Math.PI / 2, sx: 0.16, sy: 1.6, sz: 0.16 }, 0.45);
             break;
           }
           case 'furnace': {
-            const s = rng.range(1.2, 2);
-            pushBox(solid, { x: p.x, y: s / 2, z: p.z, ry: rot, sx: s, sy: s, sz: s * 0.8 });
-            glow.push(xform(UNIT.box, { x: p.x + Math.sin(rot) * (s * 0.42), y: s * 0.5, z: p.z + Math.cos(rot) * (s * 0.42), ry: rot, sx: s * 0.5, sy: s * 0.35, sz: 0.06 }));
+            const h = rng.range(1.8, 2.6);
+            B(body, { x, y: h / 2, z, ry, sx: 2.0, sy: h, sz: 1.0 }, 0.8);
+            B(dark, { x: x + fx * 0.52, y: h * 0.45, z: z + fz * 0.52, ry, sx: 1.1, sy: h * 0.5, sz: 0.08 }, 0.35);
+            B(glow, { x: x + fx * 0.56, y: h * 0.45, z: z + fz * 0.56, ry, sx: 0.95, sy: h * 0.4, sz: 0.03 }, 1);
+            for (let k = 0; k < 4; k++) {
+              B(dark, { x: x + fx * 0.58, y: h * 0.25 + k * h * 0.13, z: z + fz * 0.58, ry, sx: 1.0, sy: 0.05, sz: 0.03 }, 0.3);
+            }
+            C(accent, { x: x - fx * 0.2, y: h + 1.1, z: z - fz * 0.2, sx: 0.4, sy: 2.2, sz: 0.4 }, 0.6);
             break;
           }
           case 'abandoned': {
-            if (rng.chance(0.5)) {
-              pushBox(solid, { x: p.x, y: 0.4, z: p.z, ry: rot, rz: rng.range(-0.3, 0.3), sx: 1.6, sy: 0.8, sz: 0.9 });
+            const roll = rng();
+            if (roll < 0.35) {
+              // desk + dead terminal
+              B(body, { x, y: 0.72, z, ry, sx: 1.7, sy: 0.1, sz: 0.9 }, 0.8);
+              for (const [ox, oz] of [[-0.7, -0.3], [0.7, -0.3], [-0.7, 0.3], [0.7, 0.3]]) {
+                B(dark, { x: x + ox * Math.cos(ry) - oz * Math.sin(ry), y: 0.36, z: z + ox * Math.sin(ry) + oz * Math.cos(ry), sx: 0.09, sy: 0.72, sz: 0.09 }, 0.5);
+              }
+              B(dark, { x, y: 1.06, z, ry, sx: 0.95, sy: 0.6, sz: 0.09 }, 0.45);
+              if (rng.chance(0.35)) B(glow, { x: x + fx * 0.06, y: 1.06, z: z + fz * 0.06, ry, sx: 0.82, sy: 0.46, sz: 0.02 }, 1);
+            } else if (roll < 0.6) {
+              // hanging curtain — somebody made this place a home
+              const w = rng.range(1.4, 2.4);
+              B(body, { x: x + fx * 0.1, y: WALL_H - 1.5, z: z + fz * 0.1, ry, sx: w, sy: 2.6, sz: 0.06 }, 0.65);
+              B(accent, { x: x + fx * 0.1, y: WALL_H - 0.25, z: z + fz * 0.1, ry, sx: w + 0.2, sy: 0.1, sz: 0.12 }, 0.8);
+            } else if (roll < 0.82) {
+              // toppled chair
+              B(body, { x, y: 0.22, z, ry, rz: 1.3, sx: 0.55, sy: 0.1, sz: 0.55 }, 0.75);
+              B(dark, { x: x + 0.25, y: 0.5, z, ry, sx: 0.1, sy: 0.6, sz: 0.5 }, 0.5);
             } else {
-              pushBox(solid, { x: p.x, y: 0.45, z: p.z, ry: rot, sx: 0.7, sy: 0.9, sz: 0.7 });
-              glow.push(xform(UNIT.box, { x: p.x, y: 0.95, z: p.z, ry: rot, sx: 0.4, sy: 0.03, sz: 0.3 }));
+              // stacked crates of somebody's things
+              B(body, { x, y: 0.4, z, ry, sx: 1.0, sy: 0.8, sz: 0.7 }, 0.8);
+              B(accent, { x, y: 0.84, z, ry, sx: 1.05, sy: 0.08, sz: 0.75 }, 0.65);
+            }
+            break;
+          }
+          case 'garden': {
+            const h = rng.range(1.6, 3.2);
+            C(dark, { x, y: 0.22, z, sx: 1.5, sy: 0.44, sz: 1.5 }, 0.55);
+            C(body, { x, y: h / 2, z, rz: rng.range(-0.12, 0.12), sx: 0.24, sy: h, sz: 0.24 }, 0.8);
+            for (let k = 0; k < 5; k++) {
+              const a = rng() * Math.PI * 2, rr = rng.range(0.3, 0.85);
+              I(glow, {
+                x: x + Math.cos(a) * rr, y: h * rng.range(0.5, 1.05), z: z + Math.sin(a) * rr,
+                sx: 0.3, sy: 0.42, sz: 0.3, rz: rng.range(-0.5, 0.5),
+              }, 1);
+              N(body, {
+                x: x + Math.cos(a) * rr * 0.6, y: h * 0.6, z: z + Math.sin(a) * rr * 0.6,
+                sx: 0.5, sy: 0.9, sz: 0.12, rz: a,
+              }, 0.7);
             }
             break;
           }
           case 'circuit': {
-            const h = rng.range(0.3, 0.8);
-            pushBox(solid, { x: p.x, y: h / 2, z: p.z, ry: rot, sx: rng.range(1.5, 3), sy: h, sz: rng.range(1.5, 3) });
-            glow.push(xform(UNIT.box, { x: p.x, y: h + 0.03, z: p.z, ry: rot, sx: 0.12, sy: 0.03, sz: rng.range(1.5, 3) }));
-            glow.push(xform(UNIT.box, { x: p.x, y: h + 0.03, z: p.z, ry: rot, sx: rng.range(1.5, 3), sy: 0.03, sz: 0.12 }));
-            break;
-          }
-          case 'garden': {
-            const h = rng.range(1.2, 2.6);
-            pushCyl(solid, { x: p.x, y: h / 2, z: p.z, sx: 0.3, sy: h, sz: 0.3 });
+            const w = rng.range(1.6, 3.0);
+            B(body, { x, y: 0.14, z, ry, sx: w, sy: 0.28, sz: w * 0.7 }, 0.8);
             for (let k = 0; k < 4; k++) {
-              const a = rot + k * 1.57;
-              glow.push(xform(UNIT.icosa, { x: p.x + Math.cos(a) * 0.5, y: h - rng.range(0, 0.6), z: p.z + Math.sin(a) * 0.5, sx: 0.4, sy: 0.4, sz: 0.4 }));
+              B(dark, { x: x + rng.range(-w / 3, w / 3), y: 0.34, z: z + rng.range(-w / 4, w / 4), ry, sx: 0.3, sy: 0.14, sz: 0.3 }, 0.45);
             }
+            B(glow, { x, y: 0.3, z, ry, sx: w * 0.9, sy: 0.02, sz: 0.06 }, 1);
+            B(glow, { x, y: 0.3, z, ry, sx: 0.06, sy: 0.02, sz: w * 0.6 }, 1);
+            C(accent, { x, y: 1.1, z, sx: 0.2, sy: 1.9, sz: 0.2 }, 0.7);
+            S(glow, { x, y: 2.1, z, sx: 0.3, sy: 0.3, sz: 0.3 }, 1);
             break;
           }
           case 'mirrors': {
-            const h = rng.range(2.4, 3.6);
-            pushBox(solid, { x: p.x, y: h / 2, z: p.z, ry: rot, sx: 1.8, sy: h, sz: 0.14 });
-            glow.push(xform(UNIT.box, { x: p.x, y: h / 2, z: p.z, ry: rot, sx: 1.9, sy: 0.06, sz: 0.16 }));
-            break;
-          }
-          case 'vault': {
-            const s = rng.range(1, 1.8);
-            pushBox(solid, { x: p.x, y: s / 2, z: p.z, ry: rot, sx: s * 1.4, sy: s, sz: s });
-            glow.push(xform(UNIT.torus, { x: p.x + Math.sin(rot) * (s * 0.52), y: s * 0.55, z: p.z + Math.cos(rot) * (s * 0.52), ry: rot, sx: s * 0.7, sy: s * 0.7, sz: s * 0.7 }));
+            const h = rng.range(2.6, 3.6);
+            B(accent, { x: x + fx * 0.06, y: h / 2, z: z + fz * 0.06, ry, sx: 1.9, sy: h, sz: 0.12 }, 0.9);
+            B(glow, { x: x + fx * 0.14, y: h / 2, z: z + fz * 0.14, ry, sx: 1.72, sy: h - 0.18, sz: 0.03 }, 0.35);
+            B(accent, { x: x + fx * 0.16, y: h / 2, z: z + fz * 0.16, ry, rz: rng.range(-0.4, 0.4), sx: 0.05, sy: h, sz: 0.02 }, 1);
             break;
           }
           default: { // 'void'
-            glow.push(xform(UNIT.octa, { x: p.x, y: rng.range(0.6, 2.8), z: p.z, ry: rot, sx: rng.range(0.4, 1.2), sy: rng.range(0.4, 1.2), sz: rng.range(0.4, 1.2) }));
+            const h = rng.range(0.8, 3.2);
+            I(glow, { x, y: h, z, ry, sx: rng.range(0.4, 1.1), sy: rng.range(0.4, 1.1), sz: rng.range(0.4, 1.1) }, 1);
+            B(dark, { x, y: h, z, ry, sx: 2.2, sy: 0.02, sz: 0.02 }, 0.8);
             break;
           }
         }
       }
+
+      // --- a few free-standing pieces so the middle isn't bare ---
+      for (let i = 0; i < freeCount; i++) {
+        const p = this.randomPointIn(room, rng, 3);
+        const ry = rng() * Math.PI * 2;
+        if (style === 'void') {
+          I(glow, { x: p.x, y: rng.range(1, 3.4), z: p.z, ry, sx: rng.range(0.3, 0.8), sy: rng.range(0.3, 0.8), sz: rng.range(0.3, 0.8) }, 1);
+        } else if (style === 'garden') {
+          for (let k = 0; k < 3; k++) {
+            C(body, { x: p.x + rng.range(-0.5, 0.5), y: rng.range(0.3, 0.7), z: p.z + rng.range(-0.5, 0.5), sx: 0.1, sy: rng.range(0.6, 1.4), sz: 0.1, rz: rng.range(-0.3, 0.3) }, 0.7);
+          }
+        } else {
+          // low debris — reads as cover without blocking movement
+          B(dark, { x: p.x, y: 0.14, z: p.z, ry, sx: rng.range(0.5, 1.2), sy: 0.28, sz: rng.range(0.5, 1.2) }, 0.6);
+        }
+      }
     }
 
-    if (solid.length) {
-      const c = new THREE.Color(pal.wallAccent);
-      this.decorGroup.add(new THREE.Mesh(
-        mergeGeometries(solid),
-        new THREE.MeshLambertMaterial({
-          color: pal.wallAccent, emissive: c.clone().multiplyScalar(0.24).getHex(), flatShading: true,
-        }),
-      ));
+    // Cables slung under the ceiling in corridors.
+    for (const room of this.rooms) {
+      if (rng.chance(0.5)) continue;
+      const p = this.randomPointIn(room, rng, 2);
+      const len = rng.range(3, 8);
+      const ry = rng() * Math.PI * 2;
+      C(dark, { x: p.x, y: WALL_H - 0.85, z: p.z, ry, rx: Math.PI / 2, sx: 0.07, sy: len, sz: 0.07 }, 0.4);
+      C(dark, { x: p.x + 0.2, y: WALL_H - 1.0, z: p.z, ry: ry + 0.2, rx: Math.PI / 2, sx: 0.05, sy: len * 0.8, sz: 0.05 }, 0.35);
     }
-    if (glow.length) {
-      this.decorGroup.add(new THREE.Mesh(
-        mergeGeometries(glow),
-        new THREE.MeshBasicMaterial({ color: pal.emissive, transparent: true, opacity: 0.85 }),
-      ));
-    }
+
+    const add = (arr, mat) => { if (arr.length) this.decorGroup.add(new THREE.Mesh(mergeGeometries(arr), mat)); };
+    add(body, new THREE.MeshLambertMaterial({
+      color: albedo(pal.wallAccent, 2.0), vertexColors: true, flatShading: true,
+    }));
+    add(accent, new THREE.MeshLambertMaterial({
+      color: pal.trim, vertexColors: true, flatShading: true,
+    }));
+    add(dark, new THREE.MeshLambertMaterial({
+      color: albedo(pal.wall, 1.6), vertexColors: true, flatShading: true,
+    }));
+    add(glow, new THREE.MeshBasicMaterial({
+      color: pal.emissive, vertexColors: true, transparent: true, opacity: 0.92,
+    }));
   }
-
   dispose() {
     disposeTree(this.group);
     if (this.group.parent) this.group.parent.remove(this.group);

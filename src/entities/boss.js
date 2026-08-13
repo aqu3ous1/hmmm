@@ -53,7 +53,7 @@ export class Boss {
     // Tag team: a second body that waits at the edge of the arena.
     this.tagTeam = !!def.tagTeam;
     if (this.tagTeam) {
-      this.meshB = buildBossMesh({ ...def, build: def.buildB });
+      this.meshB = buildBossMesh(def, true);
       this.meshB.position.copy(pos);
       this.activeTwin = 0;
       this.benchPos = pos.clone();

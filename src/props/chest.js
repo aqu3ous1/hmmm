@@ -131,7 +131,7 @@ export class Chest {
     switch (this.state) {
       case STATES.CLOSED:
         lid.position.y = 0.86 + Math.sin(now * 1.6) * 0.012;
-        beam.material.opacity = 0.06 + Math.sin(now * 2.2) * 0.02;
+        beam.material.opacity = 0.035 + Math.sin(now * 2.2) * 0.012;
         break;
 
       case STATES.OPENING: {
@@ -140,7 +140,7 @@ export class Chest {
         lid.rotation.x = -t * 1.9;
         lid.position.y = 0.86 + t * 0.28;
         lid.position.z = -t * 0.38;
-        beam.material.opacity = t * 0.3;
+        beam.material.opacity = t * 0.16;
         if (t >= 1) {
           this.state = STATES.ROLLING;
           this.rollElapsed = 0;
@@ -155,7 +155,7 @@ export class Chest {
         // Ease-out: swaps start frantic and stretch out toward the end.
         this.rollInterval = 0.035 + Math.pow(p, 3.1) * 0.42;
         this.iconHeight = 1.35 + p * 0.95 + Math.sin(now * 6) * 0.03;
-        beam.material.opacity = 0.3 + p * 0.25;
+        beam.material.opacity = 0.16 + p * 0.12;
 
         this.rollTimer -= dt;
         if (this.rollTimer <= 0) {
@@ -200,7 +200,7 @@ export class Chest {
           const pop = this.landTimer < 0.25 ? 1 + (0.25 - this.landTimer) * 1.6 : 1;
           this.currentIcon.scale.setScalar(pop);
         }
-        beam.material.opacity = 0.42 + Math.sin(now * 4) * 0.06;
+        beam.material.opacity = 0.24 + Math.sin(now * 4) * 0.04;
         if (Math.random() < dt * 14) {
           particles?.burst(this.pos.x, this.pos.y + hover, this.pos.z, 1, {
             color: RARITY_COLORS[WEAPONS[this.resultId].rarity], speed: 1, size: 0.05, life: 0.6, gravity: -1.5,

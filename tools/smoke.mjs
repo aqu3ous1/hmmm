@@ -213,6 +213,73 @@ try {
     if (process.env.VERBOSE) for (const r of bench) console.log('   ', r);
   }
 
+  // --- Headshots: aiming at the model's head must hurt more than the body. ---
+  const headTest = await page.evaluate(async () => {
+    const g = window.game;
+    const THREE = await import('/vendor/three.module.js');
+    const W = await import('/src/combat/weapons.js');
+    const rows = [];
+
+    for (const id of ['ak47', 'deagle', 'actuary']) {
+      const measure = (aimHead) => {
+        for (let i = g.enemies.length - 1; i >= 0; i--) { g.enemies[i].dispose(); g.enemies.splice(i, 1); }
+        g.projectiles.clear();
+        const room = g.level.rooms.reduce((a, b) => (a.w * a.h > b.w * b.h ? a : b));
+        const c = g.level.roomCenter(room);
+        g.player.pos.set(c.x, 0, c.z + 5);
+        g.player.yaw = 0;
+        g.player.health = g.player.maxHealth = 100000;
+        g.player.slots[0] = W.makeWeapon(id);
+        g.player.slots[1] = null;
+        g.player.activeSlot = 0;
+        g._refreshPairing();
+
+        const dummy = g._spawnEnemy('shambler', new THREE.Vector3(c.x, 0, c.z));
+        dummy.maxHp = dummy.hp = 500000;
+        dummy.speed = 0;
+        // Aim exactly at the head centre, or at the middle of the torso.
+        const targetY = aimHead ? dummy.headY() : dummy.pos.y + dummy.height * 0.45;
+        const dist = 5;
+        g.player.pitch = Math.atan2(targetY - g.player.eyeY(), dist);
+
+        const before = g.player.stats.damageDealt;
+        g.input.locked = true;
+        for (let i = 0; i < 240; i++) {
+          dummy.vel.set(0, 0, 0);
+          dummy.pos.set(c.x, 0, c.z);
+          dummy.hp = 500000;
+          g.input.mouse.left = true;
+          g.input.mouse.leftPressed = i % 9 === 0;
+          if (g.player.weapon.eff?.traits.has('charge') && i % 80 === 79) g.input.mouse.left = false;
+          g.player.pitch = Math.atan2(targetY - g.player.eyeY(), dist);
+          g.now += 1 / 60;
+          g.update(1 / 60);
+          g.input.endFrame();
+        }
+        g.input.mouse.left = false;
+        return g.player.stats.damageDealt - before;
+      };
+      const body = measure(false);
+      const head = measure(true);
+      rows.push({ id, body: +body.toFixed(0), head: +head.toFixed(0) });
+    }
+
+    for (let i = g.enemies.length - 1; i >= 0; i--) { g.enemies[i].dispose(); g.enemies.splice(i, 1); }
+    g.player.slots[0] = null; g.player.slots[1] = null;
+    g.player.maxHealth = 100; g.player.health = 100;
+    g.player.stats.kills = 0; g.player.stats.damageDealt = 0;
+    g._refreshPairing();
+    g.player.pos.copy(g.level.roomCenter(g.level.rooms[0]));
+    g.player.pitch = 0;
+    return rows;
+  });
+  for (const r of headTest) {
+    const ratio = r.body > 0 ? r.head / r.body : 0;
+    console.log(`   ${r.id}: body ${r.body} vs head ${r.head}  (x${ratio.toFixed(2)})`);
+    if (ratio < 1.5) errors.push(`headshots not paying off for ${r.id}: body ${r.body}, head ${r.head}`);
+  }
+  if (headTest.every((r) => r.head / Math.max(1, r.body) >= 1.5)) console.log('✓ headshots deal bonus damage');
+
   // --- Floor 0: open the prologue chest via the real interaction path. ---
   await play(1.5, { fire: false, aim: false });
   await page.evaluate(() => {

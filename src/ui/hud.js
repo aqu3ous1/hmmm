@@ -201,10 +201,11 @@ export class HUD {
 
   hideIntercom() { this.el.intercom.classList.add('hidden'); }
 
-  hitMarker(crit) {
+  hitMarker(crit, head) {
     this.el.hitmarker.classList.add('on');
-    this.el.hitmarker.classList.toggle('crit', !!crit);
-    this._hitTimer = 0.13;
+    this.el.hitmarker.classList.toggle('crit', !!crit && !head);
+    this.el.hitmarker.classList.toggle('head', !!head);
+    this._hitTimer = head ? 0.2 : 0.13;
   }
 
   screenFlash(alpha = 0.5) {
@@ -221,7 +222,7 @@ export class HUD {
   update(dt) {
     if (this._hitTimer > 0) {
       this._hitTimer -= dt;
-      if (this._hitTimer <= 0) this.el.hitmarker.classList.remove('on');
+      if (this._hitTimer <= 0) this.el.hitmarker.classList.remove('on', 'head', 'crit');
     }
     if (this._bannerTimer > 0) {
       this._bannerTimer -= dt;

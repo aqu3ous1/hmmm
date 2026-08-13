@@ -144,6 +144,14 @@ export class AudioEngine {
     }
   }
 
+  /** Distinct, unmistakable crack — you should know without reading a number. */
+  headshot() {
+    this._tone(1850, 0.07, { type: 'square', gain: 0.16, slideTo: 900 });
+    this._tone(2600, 0.05, { type: 'sine', gain: 0.13, delay: 0.02 });
+    this._tone(620, 0.16, { type: 'triangle', gain: 0.12, slideTo: 220, delay: 0.03 });
+    this._noise(0.05, { gain: 0.24, type: 'highpass', freq: 5200 });
+  }
+
   hurt() {
     this._tone(180, 0.28, { type: 'sawtooth', gain: 0.2, slideTo: 70 });
     this._noise(0.2, { gain: 0.2, type: 'lowpass', freq: 500, sweepTo: 120 });
@@ -189,10 +197,13 @@ export class AudioEngine {
     this._noise(0.5, { gain: 0.2, type: 'lowpass', freq: 2000, sweepTo: 300 });
   }
 
-  /** Radio-filtered blip that plays under intercom lines. */
-  radioBlip() {
-    this._tone(1200, 0.04, { type: 'square', gain: 0.05 });
-    this._noise(0.06, { gain: 0.05, type: 'bandpass', freq: 1800, q: 4 });
+  /**
+   * Radio-filtered blip under intercom lines. `warmth` drops the pitch and
+   * level — the doctor's channel gets colder and quieter as the run goes on.
+   */
+  radioBlip(warmth = 1) {
+    this._tone(560 + 640 * warmth, 0.04 + (1 - warmth) * 0.03, { type: 'square', gain: 0.02 + 0.03 * warmth });
+    this._noise(0.06, { gain: 0.02 + 0.03 * warmth, type: 'bandpass', freq: 700 + 1100 * warmth, q: 4 });
   }
 
   glitch(intensity = 1) {

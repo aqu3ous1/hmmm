@@ -1,10 +1,16 @@
 // The narrative spine. Lines are delivered over the intercom banner; the game
 // looks up a beat by key and queues its lines.
 //
-// speaker: 'KIMVATCH' | 'SYSTEM' | 'GLITCH' | 'CAST' | 'SELF'
+// speaker: 'KIMVATCH' | 'COLD' | 'SYSTEM' | 'GLITCH' | 'CAST' | 'SELF'
 // CAST lines carry their own "NAME: text" prefix, which the HUD splits out.
+//
+// COLD is the same man, later. The doctor starts warm and constant and talks
+// himself hoarse over the first few floors; by the top he speaks rarely, and
+// what he says has stopped being reassurance. The game widens the gap between
+// his lines as you climb — see `_ambientGap` in main.js — so the silence does
+// as much work as the writing.
 
-const K = 'KIMVATCH', S = 'SYSTEM', G = 'GLITCH', W = 'CAST', SELF = 'SELF';
+const K = 'KIMVATCH', KC = 'COLD', S = 'SYSTEM', G = 'GLITCH', W = 'CAST', SELF = 'SELF';
 
 function L(speaker, text, hold) { return { speaker, text, hold }; }
 
@@ -100,17 +106,17 @@ export const STORY = {
     8: [
       L(S, 'FLOOR 8 — HALL OF MIRRORS. REHEARSAL IN PROGRESS.', 3.8),
       L(K, 'This floor learns you. Everything in it will start moving the way you move. It is very effective and I hate it enormously.', 6.2),
-      L(K, 'The thing at the end has been learning you since the basement.', 4.8),
+      L(KC, 'The thing at the end has been learning you since the basement. It is better at you than you have been lately.', 6.4),
     ],
     9: [
       L(S, 'FLOOR 9 — SUBSTRATE LAYER.', 3),
-      L(K, 'You are inside the arithmetic now. Everything below this is a picture. Everything here is the thing drawing it.', 5.8),
-      L(K, 'She is going to introduce herself in capital letters. She cannot help it.', 4.8),
+      L(KC, 'You are inside the arithmetic now. Everything below this is a picture. Everything here is the thing drawing it.', 5.8),
+      L(KC, 'She will introduce herself in capital letters. Let her. She is the only one up here who still enjoys anything.', 6.6),
     ],
     10: [
       L(S, 'FLOOR 10 — ROOT.', 2.8),
-      L(K, 'Well. Here we are, then.', 3),
-      L(K, 'Come up. I will explain everything, and then I will try very hard to kill you, and both of those are the same apology.', 6.2),
+      L(KC, 'Well. Here we are, then.', 3.2),
+      L(KC, 'Come up. I will explain everything, and then I will try very hard to kill you, and both of those are the same apology.', 6.4),
     ],
   },
 
@@ -161,64 +167,91 @@ export const STORY = {
 
   // ---- Ambient lines, drawn at random while you play ----------------------
   ambient: {
+    // -- warm, constant, and far too pleased with itself --
     0: [
       L(K, 'The lighting down here is bad on purpose. Testing showed people move more carefully in the dark. Testing was correct and unpleasant.', 6.4),
       L(K, 'Those things used to be part of the tutorial. They were meant to demonstrate walking.', 5.4),
-      L(K, 'Do you know what the hardest part of building this was? The doors. Everything else was maths. The doors were carpentry.', 6),
+      L(K, 'Do you know what the hardest part of building this was? The doors. Everything else was maths. The doors were carpentry.', 6.2),
+      L(K, 'You are doing fine. I want to say that early and often, because later it will sound like I am covering something.', 6.4),
     ],
     1: [
       L(K, 'Every object on this floor was made by someone who cared and then removed by someone in a hurry. Usually both of those were me.', 6.6),
       L(K, 'There is a chair up here I spent two weeks on. Two weeks, Michael. It is in a pile.', 5.4),
+      L(K, 'I talk a lot. My wife used to say I narrate rooms. I am aware I am doing it. I am going to keep doing it.', 6.4),
     ],
     2: [
       L(K, 'Rack forty-one runs hot. I keep meaning to look at that.', 4),
       L(K, 'The androids still try to hand you things. Watch their left hand. There is nothing in it. There never was.', 6),
+      L(K, 'It is good to have someone to talk to up here. I had forgotten the rhythm of it.', 5.4),
     ],
+
+    // -- still chatty, but starting to step around things --
     3: [
       L(K, 'The water is not real and it is also at forty percent, and I do not know how both of those can be true.', 5.6),
       L(K, 'You are going to hear tapping. Do not follow the tapping.', 4.4),
+      L(K, 'I would rather not go into who installed the tanks. It is not important. It is genuinely not important.', 6),
     ],
     4: [
       L(K, 'Every sign out there advertises a business that does not exist. I wrote all the names myself. "Fine Meats & Ideas" is my favourite.', 6.4),
       L(K, 'It is always 2 a.m. on this floor. That is not atmospheric. I could not get the clock to run.', 5.4),
+      L(K, 'You are moving faster than I expected. I am not sure yet whether that is good.', 5.6),
     ],
+
+    // -- the reveal floor: guilt, and the first long pauses --
     5: [
-      L(K, 'Their badges still work. That is the part that gets me. Eleven months and the badges still work.', 5.6),
-      L(K, 'Alpha two used to leave notes on the walls for the others. There are four hundred notes. They all say the same thing.', 6.2),
-      L(K, 'You have gone further in an afternoon than three of them managed in a year. I do not know what to do with that.', 6.2),
-      L(K, 'Somebody has hung curtains in here. Actual curtains. I need you to understand how far that is outside the specification.', 6.4),
+      L(K, 'Their badges still work. That is the part that gets me. Eleven months and the badges still work.', 5.8),
+      L(K, 'Alpha two used to leave notes on the walls for the others. There are four hundred notes. They all say the same thing.', 6.4),
+      L(KC, 'You have gone further in an afternoon than three of them managed in a year. I have stopped being pleased about that.', 6.6),
+      L(KC, 'Somebody hung curtains in here. Curtains, Michael. Do you understand how long you have to be somewhere before you hang curtains.', 7),
     ],
+
+    // -- fewer, heavier --
     6: [
-      L(K, 'Four of the alphas are in here. They are sitting down. They have been sitting down a long time. Do not take it personally if they do not look up.', 7),
-      L(K, 'That is alpha two, by the bench. She wrote the notes. She has not stood up since 2043.', 6),
-      L(K, 'The flowers are wrong. Not badly wrong. Just — wrong in a way you cannot point at.', 5.4),
-      L(K, 'The tall one talks like a waiter and the round one talks like a foghorn. I have listened to nine years of it.', 6),
+      L(K, 'Four of them are in here. Sitting. Do not take it personally if they do not look up.', 6),
+      L(KC, 'That is alpha two, by the bench. She wrote the notes. She has not stood up since 2043. I watched her decide to stop.', 7.4),
+      L(KC, 'The flowers are wrong. Not badly wrong. Wrong in the way a face in a dream is wrong.', 6.2),
     ],
     7: [
-      L(K, 'Somebody swept up here for eight years. Nobody assigned that. He simply started.', 5.6),
-      L(K, 'The ash is procedural. The footprints in it are not.', 4.6),
-      L(K, 'Careful with the soft ones. They come off him and they keep going. I have never understood why they keep going.', 6),
+      L(KC, 'Somebody swept up here for eight years. Nobody assigned that. He simply started, and then he could not think of a reason to finish.', 7.4),
+      L(KC, 'The ash is procedural. The footprints in it are not. I have never been able to explain the footprints.', 6.6),
     ],
+
+    // -- sparse, cold, and no longer pretending to reassure --
     8: [
-      L(K, 'It has your gait now. Give it another minute and it will have your flinch.', 5),
-      L(K, 'Everything on this floor is rehearsing to be you. There is no audience. That never seems to bother it.', 6),
-      L(K, 'It picks up whatever you are carrying. If you want it to be bad at something, be bad at something.', 6.2),
+      L(KC, 'It has your gait now. Give it another minute and it will have your flinch.', 5.4),
+      L(KC, 'I have started thinking of you in the past tense. I noticed myself doing it. I am telling you because it seemed dishonest not to.', 7.6),
     ],
     9: [
-      L(K, 'She counts everything. Every particle, every footstep, every time I sigh. She has a number for that. She has told me the number.', 6.4),
-      L(K, 'Beneath this is just numbers. I keep saying that like it is reassuring.', 5),
+      L(KC, 'She counts everything. She has a number for how many times I have said your name. I asked. I should not have asked.', 7.2),
+      L(KC, '...I am still here. I want that on the record, in case the gaps are starting to worry you.', 6.4),
     ],
+
+    // -- almost silence --
     10: [
-      L(K, 'I compiled myself in an afternoon. He compiled me. I keep switching. It is a bad habit of the format.', 6),
-      L(K, 'Four hundred and eleven attempts. I remember every one and I am not sure I was meant to.', 5.8),
+      L(KC, 'Four hundred and eleven attempts. I remember every one. I was not built to remember every one.', 6.6),
+      L(KC, 'When this is over one of us stops running. I have known which one for some time.', 6.8),
     ],
   },
+
+  /** Occasional dead air on the upper floors — the silence is the point. */
+  silence: [
+    L(S, 'INTERCOM — CARRIER PRESENT. NO SPEECH.', 3.6),
+    L(S, 'INTERCOM — OPEN CHANNEL. 41 SECONDS OF NOTHING.', 3.8),
+    L(S, 'INTERCOM — SIGNAL NOMINAL. SPEAKER IDLE.', 3.6),
+  ],
 
   // ---- Reactive one-liners -------------------------------------------------
   lowHealth: [
     L(K, 'Michael. Michael. Cover. ANY cover.', 3),
     L(K, 'You are about to be put back at the start of this floor and I will have to make small talk about it.', 5),
     L(K, 'Breathe. It is simulated air but the reflex is real.', 4),
+  ],
+
+  /** Same warning, from a man who has stopped softening things. */
+  lowHealthLate: [
+    L(KC, 'You are going to lose this one.', 3),
+    L(KC, 'I am not going to tell you to be careful. You have heard it. It has not helped.', 5.4),
+    L(KC, 'If you go down here I will be alone again for a while. I have gotten used to it. I would rather not.', 6.4),
   ],
 
   playerDown: [

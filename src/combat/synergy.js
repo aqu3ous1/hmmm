@@ -329,6 +329,7 @@ export function effective(weapon, pairing) {
   const extraParams = pairing?.params.get(weapon.id);
 
   const out = {
+    headMult: weapon.headMult ?? 2.5,
     damage: weapon.damage,
     fireRate: weapon.fireRate,
     reload: weapon.reload,
@@ -342,7 +343,6 @@ export function effective(weapon, pairing) {
     critMult: weapon.critMult,
     moveMul: weapon.moveMul,
     recoil: weapon.recoil,
-    headMult: 2,
     traits: new Set(weapon.traits),
     params: { ...weapon.params, ...(extraParams || {}) },
   };

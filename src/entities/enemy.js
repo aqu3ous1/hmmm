@@ -138,6 +138,11 @@ export class Enemy {
     this.mesh.position.copy(this.pos);
     this.baseY = t.flying ? (t.hoverHeight || 2) : 0;
     this.mesh.position.y = this.baseY;
+    // Head volume comes straight from the model, so the hitbox always sits
+    // where the modeller actually put the head.
+    this.headOffset = this.mesh.userData.headY ?? t.height * 0.85;
+    this.headRadius = this.mesh.userData.headR ?? 0.2;
+    this.wobble = this.mesh.userData.wobble || 0;
     this._origColors = null;
   }
 
@@ -145,7 +150,8 @@ export class Enemy {
     return _c.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
   }
 
-  headY() { return this.pos.y + this.height * 0.88; }
+  /** World-space centre of the head — used for hit tests and damage numbers. */
+  headY() { return this.pos.y + this.baseY + this.headOffset; }
 
   /** Returns { dealt, killed, crit } after armour and status modifiers. */
   takeDamage(amount, { crit = false, source = null } = {}) {
@@ -428,14 +434,26 @@ export class Enemy {
 
     if (this.type.flying) {
       m.position.y += Math.sin(this.animPhase * 0.9) * 0.22;
-      if (upper) upper.rotation.y = now * 2.4;
+      if (upper) {
+        upper.rotation.y = now * 2.4;
+        upper.rotation.z = Math.sin(now * 1.7) * 0.12;
+      }
+    } else if (this.type.static) {
+      // Turrets don't walk; they scan and settle.
+      if (upper) upper.rotation.z = Math.sin(now * 2.2) * 0.03;
     } else {
       if (legL) legL.rotation.x = swing;
       if (legR) legR.rotation.x = -swing;
       if (upper) {
-        upper.position.y = Math.abs(Math.sin(this.animPhase)) * 0.045 * (0.4 + speed * 0.1);
-        upper.rotation.z = Math.sin(this.animPhase) * 0.045;
+        upper.position.y = Math.abs(Math.sin(this.animPhase)) * 0.05 * (0.4 + speed * 0.12);
+        upper.rotation.z = Math.sin(this.animPhase) * 0.05;
+        upper.rotation.y = Math.sin(this.animPhase) * 0.06;
         upper.rotation.x = (this.type.build.slouch || 0) * 0.5 + (this.charging > 0 ? 0.3 : 0);
+        // Soft-bodied things jiggle as they move.
+        if (this.wobble) {
+          const w = 1 + Math.sin(this.animPhase * 1.6) * 0.05 * this.wobble;
+          upper.scale.set(w, 1 / w, w);
+        }
       }
     }
 

@@ -15,7 +15,7 @@ export const ENEMY_TYPES = {
     id: 'sprinter', name: 'Sprinter', ai: 'melee', family: 'undead',
     hp: 42, speed: 5.6, damage: 11, attackRange: 1.8, attackCd: 0.7, radius: 0.4, height: 1.6,
     shards: 16, hitSound: 'flesh',
-    build: { body: 0x7a3b3b, head: 0xc26a5a, shape: 'humanoid', eye: 0xff5a3c, slouch: 0.5, lean: 0.35 },
+    build: { body: 0x8d2f2f, head: 0xd98a72, shape: 'humanoid', eye: 0xff7a3c, slouch: 0.5, lean: 0.35 },
     desc: 'Faster than it has any business being.',
   },
 
@@ -101,7 +101,7 @@ export const ENEMY_TYPES = {
     id: 'brute', name: 'Brute', ai: 'charger', family: 'creature',
     hp: 280, speed: 2.4, damage: 34, attackRange: 2.8, attackCd: 1.6, radius: 0.85, height: 2.4,
     shards: 55, hitSound: 'flesh', armor: 0.15, chargeSpeed: 12, chargeCd: 5, chargeRange: 18,
-    build: { body: 0x8a4a2e, head: 0xc4763f, shape: 'humanoid', eye: 0xff3a1a, bulk: 1.8 },
+    build: { body: 0x6b3520, head: 0xd08a4a, shape: 'humanoid', eye: 0xff5a1a, bulk: 1.8 },
     desc: 'Builds up speed and does not budget for stopping.',
   },
 

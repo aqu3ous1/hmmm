@@ -13,6 +13,7 @@ const FLOOR = Number(opt('floor', 0));
 const WEAPON = opt('weapon', 'ak47');
 const OUT = opt('out', `tools/shots/look-f${FLOOR}.png`);
 const ALL = args.includes('--all');
+const RAW = args.includes('--raw');
 const PORT = 8174;
 
 mkdirSync('tools/shots', { recursive: true });
@@ -44,12 +45,10 @@ async function stage(floor, weapon) {
       g._buildFloor(floor, (await import('/src/world/floors.js')).floorConfig(floor));
       g._enterFloor((await import('/src/world/floors.js')).floorConfig(floor));
     }
+    // Skip the cold-open dim; otherwise leave lighting exactly as the game set it.
     g.prologueActive = false;
     g._lightRamp = null;
     const cfg = (await import('/src/world/floors.js')).floorConfig(floor);
-    g.ambientLight.intensity = cfg.ambient * 3.1;
-    g.hemi.intensity = 1.5;
-    g.scene.fog.density = cfg.palette.fogDensity;
 
     g.player.slots[0] = W.makeWeapon(weapon);
     g.player.slots[1] = W.makeWeapon(weapon === 'ak47' ? 'sanguine' : 'ak47');
@@ -57,7 +56,9 @@ async function stage(floor, weapon) {
     g._refreshPairing();
 
     // Stand in the biggest room, facing its middle, with a crowd in front.
-    const room = g.level.rooms.reduce((a, b) => (a.w * a.h > b.w * b.h ? a : b));
+    const candidates = g.level.rooms.filter((r) => r !== g.bossRoom && r.type !== 'spawn');
+    const room = (candidates.length ? candidates : g.level.rooms)
+      .reduce((a, b) => (a.w * a.h > b.w * b.h ? a : b));
     const c = g.level.roomCenter(room);
     g.player.pos.set(c.x, 0, c.z + Math.min(9, room.h * 0.9));
     g.player.yaw = 0; g.player.pitch = -0.04;
@@ -71,6 +72,7 @@ async function stage(floor, weapon) {
     g.hud.intercom('DR. KIMVATCH', 'Every weapon in the Pod is something he loved. That is the whole design document.', '');
     for (let i = 0; i < 40; i++) { g.now += 1 / 60; g.update(1 / 60); g.input.endFrame(); }
   }, { floor, weapon });
+  if (RAW) await page.evaluate(() => { window.game.post.enabled = false; });
   await page.waitForTimeout(900);
 }
 

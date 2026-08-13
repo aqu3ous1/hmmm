@@ -406,7 +406,8 @@ export class WeaponRuntime {
     let dmg = damage;
     let crit = false;
     if (Math.random() < e.critChance) { crit = true; dmg *= e.critMult; }
-    if (opts.headshot) dmg *= e.headMult * (e.traits.has('bigHead') ? 1.6 : 1);
+    const head = !!opts.headshot;
+    if (head) dmg *= e.headMult * (e.traits.has('bigHead') ? 1.6 : 1);
 
     if (e.traits.has('shardScaling')) {
       const per = e.params.shardsPerPoint || 40;
@@ -422,10 +423,24 @@ export class WeaponRuntime {
       target.pos.x + (Math.random() - 0.5) * 0.5,
       target.headY() + 0.2,
       target.pos.z + (Math.random() - 0.5) * 0.5,
-      res.dealt, opts.headshot ? 'head' : crit ? 'crit' : 'normal',
+      res.dealt, head ? 'head' : crit ? 'crit' : 'normal',
     );
-    ctx.audio.hit(crit || opts.headshot ? 'crit' : (target.type?.hitSound || 'flesh'));
-    ctx.hitMarker(crit || opts.headshot);
+    if (head) {
+      ctx.audio.headshot();
+      ctx.toast('HEADSHOT', 'good', 0.7);
+      // A bright spray from the head itself, so the hit reads at a glance.
+      ctx.particles.burst(target.pos.x, target.headY(), target.pos.z, 12, {
+        color: [0xffffff, 0xffd24a, target.type?.build?.eye ?? 0xffffff],
+        speed: 6, size: 0.09, life: 0.45,
+      });
+      ctx.particles.ring(target.pos.x, target.headY(), target.pos.z, {
+        from: 0.15, to: 1.1, life: 0.28, color: 0xffd24a, flat: false,
+      });
+      ctx.particles.flash(target.pos.x, target.headY(), target.pos.z, 0xffd8a0, 2.4, 0.1, 7);
+    } else {
+      ctx.audio.hit(crit ? 'crit' : (target.type?.hitSound || 'flesh'));
+    }
+    ctx.hitMarker(crit || head, head);
 
     const px = opts.point?.x ?? target.pos.x;
     const py = opts.point?.y ?? (target.pos.y + target.height * 0.55);
