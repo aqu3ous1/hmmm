@@ -20,18 +20,40 @@ The game is ES modules, so it needs to be served over HTTP (opening
 `index.html` from disk will be blocked by the browser's module CORS rules).
 
 ```bash
-python3 -m http.server 8080
-# then open http://localhost:8080
-```
-
-or
-
-```bash
-npx serve .
+npm start          # http://localhost:8080
 ```
 
 Headphones recommended — the music and every sound effect are synthesised live
 in the Web Audio API and react to what's happening around you.
+
+### If the server seems to be serving an old version
+
+It almost certainly isn't — your browser is. **Do not use
+`python3 -m http.server`** for this project: it sends `Last-Modified` but no
+`Cache-Control`, so browsers fall back to *heuristic* caching for `.js` and
+`.css`. A normal refresh then re-fetches `index.html` and quietly reuses every
+cached ES module underneath it, which looks exactly like a stale deploy.
+
+`npm start` runs `tools/serve.mjs`, a small dependency-free static server that
+sends `Cache-Control: no-store` and the correct MIME types, so a plain refresh
+always gets what is on disk.
+
+To confirm which build you are looking at, without guessing:
+
+- the **title screen** shows `BUILD n · NAME` in the bottom-right corner;
+- the console logs `Inhibited Abyss — build n — name (date)` at boot;
+- the server prints the build and the git commit when it starts;
+- `npm run check:serve` boots the game through that server headlessly and
+  reports the build it actually loaded.
+
+Both values come from `src/version.js`. If the stamp on screen doesn't match
+what you just shipped, it's a cache — hard-reload (`Ctrl`/`Cmd` + `Shift` + `R`),
+or open DevTools ▸ Network ▸ *Disable cache*.
+
+If you are hosting this somewhere else, make sure that host sends `no-store`
+(or a real cache-busting scheme) for `.js` and `.css`. Versioning only the entry
+points is not enough here — nested module imports are resolved relative and
+would still be served from cache.
 
 ---
 
@@ -156,6 +178,7 @@ styles.css          the Pod's own instrumentation look
 vendor/             three.js r169 (module build) + its licence
 src/
   main.js           game orchestration: floors, waves, interaction, screens
+  version.js        the build stamp shown on the title screen
   core/             input (pointer lock), procedural audio, math + RNG
   world/            floor configs, grid level generation, geometry helpers
   entities/         player controller, enemy AI + flow-field pathing, bosses
@@ -165,7 +188,7 @@ src/
   fx/               particles, rings, tracers, damage numbers
   story/            Dr. Kimvatch's script and the floor beats
   ui/               HUD bindings, codex, loadout panel
-tools/              headless smoke test, visual probes, perf probe
+tools/              dev server, headless smoke test, visual probes, perf probe
 ```
 
 Some notes on how it works, in case you want to poke at it:
@@ -201,7 +224,8 @@ Some notes on how it works, in case you want to poke at it:
 
 ```bash
 npm install          # playwright, dev-only
-node tools/smoke.mjs --floors 11 --seconds 8
+npm test             # the full climb
+npm run check:serve  # boots through the real dev server, reports the build
 ```
 
 Boots the game in headless Chromium, opens the prologue chest through the real

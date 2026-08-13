@@ -25,6 +25,7 @@ import { Chest, WeaponIconCache } from './props/chest.js';
 import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/models.js';
 
 import { PostFX } from './render/postfx.js';
+import { BUILD, BUILD_NAME, BUILD_DATE } from './version.js';
 import { HUD, buildCodex, renderLoadoutDetail } from './ui/hud.js';
 import { STORY, AmbientPool } from './story/script.js';
 
@@ -169,6 +170,11 @@ class Game {
 
   _wireUI() {
     buildCodex();
+    // Stamp the build so a stale cache is obvious rather than mysterious.
+    this.version = `build ${BUILD} — ${BUILD_NAME} (${BUILD_DATE})`;
+    const stamp = $('buildStamp');
+    if (stamp) stamp.textContent = `BUILD ${BUILD} · ${BUILD_NAME.toUpperCase()}`;
+    console.log(`%cInhibited Abyss — ${this.version}`, 'color:#ffc24a');
     const show = (id) => { for (const s of document.querySelectorAll('.screen')) s.classList.add('hidden'); if (id) $(id).classList.remove('hidden'); };
     this.showScreen = show;
 

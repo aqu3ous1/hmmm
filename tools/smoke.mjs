@@ -19,7 +19,9 @@ const PORT = 8171;
 
 mkdirSync('tools/shots', { recursive: true });
 
-const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], {
+// Deliberately the same server `npm start` uses, so a regression there fails
+// the test run rather than surfacing later as "it's serving the old version".
+const server = spawn('node', ['tools/serve.mjs', '--port', String(PORT), '--host', '127.0.0.1'], {
   stdio: 'ignore', detached: false,
 });
 await new Promise((r) => setTimeout(r, 700));
