@@ -119,7 +119,7 @@ export class Particles {
     return null;
   }
 
-  beam(ax, ay, az, bx, by, bz, { life = 0.09, color = 0xffffff, width = 0.03 } = {}) {
+  beam(ax, ay, az, bx, by, bz, { life = 0.07, color = 0xffffff, width = 0.016 } = {}) {
     for (const b of this.beams) {
       if (b.life > 0) continue;
       b.life = b.maxLife = life;
@@ -148,7 +148,7 @@ export class Particles {
       const nx = ax + (bx - ax) * t + (Math.random() - 0.5) * jitter;
       const ny = ay + (by - ay) * t + (Math.random() - 0.5) * jitter;
       const nz = az + (bz - az) * t + (Math.random() - 0.5) * jitter;
-      this.beam(px, py, pz, nx, ny, nz, { color, width: 0.05, life: 0.14 });
+      this.beam(px, py, pz, nx, ny, nz, { color, width: 0.018, life: 0.08 });
       px = nx; py = ny; pz = nz;
     }
   }

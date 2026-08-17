@@ -1302,7 +1302,15 @@ class Game {
   _updateEnemies(dt) {
     const ctx = this._enemyCtx();
     for (let i = this.enemies.length - 1; i >= 0; i--) {
+      // Walking backwards over a swap-removed list is only safe while each
+      // step removes at most one entry. A death here can cascade — a bloater
+      // going off takes its neighbours with it, a jumbo bursts, a chain jumps
+      // — so the list can shrink past `i` in a single iteration and leave it
+      // pointing at nothing. Re-clamp rather than assume.
+      if (i >= this.enemies.length) i = this.enemies.length - 1;
+      if (i < 0) break;
       const e = this.enemies[i];
+      if (!e) continue;
       if (!e.alive) { this._killEnemy(e, null, null); continue; }
       // Skip AI for distant enemies most frames; they still drift toward you.
       const far = (e.pos.x - this.player.pos.x) ** 2 + (e.pos.z - this.player.pos.z) ** 2 > 70 * 70;
@@ -1574,8 +1582,9 @@ class Game {
     this.hud.screenFlash(0.6);
     this.hud.banner('BOSS DOWN', def.name, 3.6);
 
-    // Clear the room's minions as a reward.
-    for (let i = this.enemies.length - 1; i >= 0; i--) this._killEnemy(this.enemies[i], null, null);
+    // Clear the room's minions as a reward. Drain from the end rather than
+    // indexing, because a death here can cascade and take more than one.
+    while (this.enemies.length) this._killEnemy(this.enemies[this.enemies.length - 1], null, null);
 
     const lines = def.lines.death.map((t) => ({ speaker: 'BOSS', text: t, hold: Math.max(3, t.length * 0.05) }));
     this._queue(lines, true);
