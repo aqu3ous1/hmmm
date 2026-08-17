@@ -121,6 +121,11 @@ and 3x on the Actuary — with its own sound, its own spray, and its own callout
 so you never have to read a number to know you got it. The Actuarial Table
 synergy adds another 60% on top.
 
+**There is an optional board.** Every floor above the basement posts one side
+contract by the spawn — clean sheet, every log read, the cache opened, fifteen
+headshots, six minutes flat. Accepting one is a decision: they can be failed,
+and they pay in shards, max health or a rerolled hand rather than in damage.
+
 **Shards are the currency.** Kills pay out. Vend-o-Trons sell ammo, medical
 patches, and a re-roll of whatever is in your active hand — prices climb each
 time you use one.
@@ -283,6 +288,7 @@ Two more probes, for looking at things rather than asserting on them:
 node tools/look.mjs --all                 # one screenshot per floor
 node tools/look.mjs --floor 4 --weapon nimbo
 node tools/look.mjs --floor 2 --raw       # same frame with post-processing off
+node tools/title.mjs                      # the menu, with its corridor running
 node tools/cast.mjs                       # contact sheet of all 18 enemies
 node tools/cast.mjs --bosses              # …and the 10 bosses
 node tools/guns.mjs                       # …and all 22 weapons
