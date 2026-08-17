@@ -27,7 +27,12 @@ export class ProjectileSystem {
       : UNIT.lowSphere.clone();
     this.mesh = new THREE.InstancedMesh(
       geo,
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95 }),
+      // Additive: a bolt is light, not a painted object. It also means two
+      // overlapping tracers brighten instead of z-fighting.
+      new THREE.MeshBasicMaterial({
+        transparent: true, opacity: 0.95, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
       MAX,
     );
     this.mesh.frustumCulled = false;
@@ -171,8 +176,15 @@ export class ProjectileSystem {
     }
   }
 
-  /** Push positions into the instance buffer. Called once per frame after update. */
-  sync(time = 0) {
+  /**
+   * Push positions into the instance buffer. Called once per frame after update.
+   *
+   * `eye` is the camera position. A bolt passing a metre from your face is
+   * geometrically correct and visually useless — an opaque capsule that close
+   * fills a third of the screen as a flat coloured polygon. Shrinking and
+   * fading it inside two metres keeps the near miss legible as a streak.
+   */
+  sync(time = 0, eye = null) {
     let n = 0;
     for (let i = 0; i < MAX; i++) {
       const p = this.pool[i];
@@ -195,7 +207,15 @@ export class ProjectileSystem {
       // than a ball, and kept slim across so a near miss is a streak past your
       // ear instead of a coloured blob filling a third of the screen.
       const stretch = Math.min(5.5, 1.1 + speed * 0.055);
-      _s.set(p.size * 1.15, p.size * stretch, p.size * 1.15);
+      let near = 1;
+      if (eye) {
+        const d = Math.hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z);
+        // Full size beyond 2.4m, gone by 0.5m.
+        near = Math.max(0, Math.min(1, (d - 0.5) / 1.9));
+        near *= near;
+      }
+      const sz = p.size * near;
+      _s.set(sz * 1.15, sz * stretch, sz * 1.15);
       _m.compose(_p, _q, _s);
       this.mesh.setMatrixAt(i, _m);
       this.mesh.setColorAt(i, this._color.setHex(p.color));

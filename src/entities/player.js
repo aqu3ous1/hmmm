@@ -228,13 +228,19 @@ export class Player {
     this.shake = damp(this.shake, 0, 5, dt);
   }
 
-  /** Apply the camera transform, including bob, recoil and shake. */
-  applyCamera(camera, dt) {
+  /**
+   * Apply the camera transform, including bob, recoil and shake.
+   *
+   * `bobScale` and `shakeScale` come from the accessibility settings. Both go
+   * to zero, and at zero the camera is rigid — which for some players is the
+   * difference between finishing the game and being unable to play it.
+   */
+  applyCamera(camera, dt, bobScale = 1, shakeScale = 1) {
     const planarSpeed = Math.hypot(this.vel.x, this.vel.z);
-    const bobAmp = Math.min(0.055, planarSpeed * 0.007);
+    const bobAmp = Math.min(0.055, planarSpeed * 0.007) * bobScale;
     const bobY = Math.sin(this.bob * 2) * bobAmp;
     const bobX = Math.cos(this.bob) * bobAmp * 0.7;
-    const sh = this.shake;
+    const sh = this.shake * shakeScale;
     camera.position.set(
       this.pos.x + bobX + (Math.random() - 0.5) * sh * 0.14,
       this.eyeY() + bobY + (Math.random() - 0.5) * sh * 0.14,
@@ -244,7 +250,7 @@ export class Player {
     camera.rotation.order = 'YXZ';
     camera.rotation.y = this.yaw + this.recoilYaw;
     camera.rotation.x = this.pitch + this.recoilPitch;
-    camera.rotation.z = this.viewRoll;
+    camera.rotation.z = this.viewRoll * bobScale;
   }
 
   reset(spawnPos) {

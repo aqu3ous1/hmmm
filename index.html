@@ -206,6 +206,36 @@
       <label>Effects <input id="volSfx" type="range" min="0" max="100" value="80" /></label>
       <label>Mouse sensitivity <input id="sens" type="range" min="20" max="400" value="110" /></label>
     </div>
+
+    <h3 class="accessHead">ACCESSIBILITY</h3>
+    <div class="sliders access">
+      <label>Screen shake <input id="optShake" type="range" min="0" max="100" value="100" /></label>
+      <label>Camera bob <input id="optBob" type="range" min="0" max="100" value="100" /></label>
+      <label>Text size <input id="optText" type="range" min="80" max="160" value="100" /></label>
+      <label class="check">
+        <input id="optFlash" type="checkbox" />
+        <span>Reduce flashing<i>Damps the glitch beats, muzzle flash and screen flashes</i></span>
+      </label>
+      <label class="check">
+        <input id="optHold" type="checkbox" />
+        <span>Tap to interact<i>Panels complete on a press instead of a held key</i></span>
+      </label>
+      <label class="check">
+        <input id="optCine" type="checkbox" />
+        <span>Skip cutscenes<i>Story still plays as dialogue, without the camera</i></span>
+      </label>
+      <label class="select">
+        <span>Colour vision</span>
+        <select id="optColour">
+          <option value="none">Standard</option>
+          <option value="deut">Deuteranopia — red/green</option>
+          <option value="prot">Protanopia — red/green</option>
+          <option value="trit">Tritanopia — blue/yellow</option>
+          <option value="mono">Monochrome — shape and brightness only</option>
+        </select>
+      </label>
+    </div>
+
     <div class="pause-actions">
       <button id="btnResume" class="primary">RESUME</button>
       <button id="btnPauseHow">CONTROLS</button>

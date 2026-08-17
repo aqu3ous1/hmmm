@@ -424,7 +424,8 @@ export class WeaponRuntime {
       dmg += Math.min(cap, player.shards / per);
     }
 
-    const res = target.takeDamage(dmg, { crit });
+    // Pass where the shot came from, so the flinch folds the right way.
+    const res = target.takeDamage(dmg, { crit, source: opts.point || ctx.muzzle });
     if (res.dealt <= 0) return;
 
     player.stats.damageDealt += res.dealt;

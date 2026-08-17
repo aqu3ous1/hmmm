@@ -162,10 +162,29 @@ export class AudioEngine {
     this._tone(90, 0.5 * size, { type: 'sine', gain: 0.35, slideTo: 30 });
   }
 
+  /**
+   * Reload, in three beats: the magazine release, the new one seating, and the
+   * bolt going home. One undifferentiated click gives the player no sense of
+   * how far through a two-second reload they are — which matters, because that
+   * is exactly when something is walking toward them.
+   */
   reload(stage = 0) {
-    const f = [420, 300, 620][stage % 3];
-    this._tone(f, 0.05, { type: 'square', gain: 0.1, slideTo: f * 0.6 });
-    this._noise(0.05, { gain: 0.12, type: 'bandpass', freq: 2200, q: 3 });
+    if (!this.ready) return;
+    if (stage === 0) {
+      // Catch releases, magazine drops free.
+      this._tone(880, 0.04, { type: 'square', gain: 0.09 });
+      this._noise(0.06, { gain: 0.13, type: 'highpass', freq: 2600 });
+      this._noise(0.16, { gain: 0.07, type: 'bandpass', freq: 420, q: 2, delay: 0.1 });
+    } else if (stage === 1) {
+      // New magazine seats — a solid, low knock.
+      this._noise(0.09, { gain: 0.2, type: 'bandpass', freq: 700, q: 1.6 });
+      this._tone(190, 0.11, { type: 'triangle', gain: 0.14, slideTo: 120 });
+    } else {
+      // Bolt home. The bright one, so it reads as "ready" from across a room.
+      this._noise(0.06, { gain: 0.26, type: 'highpass', freq: 1800 });
+      this._tone(1250, 0.05, { type: 'square', gain: 0.12, slideTo: 700 });
+      this._tone(320, 0.12, { type: 'triangle', gain: 0.1, slideTo: 210, delay: 0.02 });
+    }
   }
 
   pickup() {
@@ -239,6 +258,25 @@ export class AudioEngine {
    * Start (or crossfade to) a floor's music bed. The pattern is regenerated
    * every bar so it never loops audibly.
    */
+  /**
+   * Hand the score over to a new one without a gap.
+   *
+   * A boss fight used to arrive via stopMusic() and a setTimeout, which meant
+   * half a second of nothing exactly where the tension should peak. Ducking
+   * into the new bed and swapping the pattern on the beat keeps the pulse.
+   */
+  crossfadeMusic(cfg, seconds = 0.9) {
+    if (!this.ready) { this.startMusic(cfg); return; }
+    const t = this.now;
+    this.musicGain.gain.cancelScheduledValues(t);
+    this.musicGain.gain.setTargetAtTime(this.musicVolume * 0.12, t, seconds / 4);
+    clearTimeout(this._xfTimer);
+    this._xfTimer = setTimeout(() => {
+      const keepStep = this._music ? this._music.step : 0;
+      this.startMusic({ ...cfg, step: keepStep });
+    }, seconds * 500);
+  }
+
   startMusic(cfg) {
     if (!this.ready) return;
     this._music = Object.assign({

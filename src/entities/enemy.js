@@ -105,6 +105,8 @@ export class Enemy {
 
     this.attackCd = Math.random() * t.attackCd;
     this.stagger = 0;
+    this.hitPower = 0;
+    this.hitFrom = 0;
     this.animPhase = Math.random() * 10;
     this.flash = 0;
 
@@ -178,6 +180,18 @@ export class Enemy {
     this.hp -= dmg;
     this.flash = 0.12;
     this.stagger = Math.min(0.35, this.stagger + 0.06);
+    // A flinch: which way the hit came from, and how hard, so the animator can
+    // rock the upper body instead of just scaling the whole rig by 18%.
+    // Scaling reads as a balloon inflating; a body folding around a hit reads
+    // as a body being hit.
+    this.hitPower = Math.min(1, (this.hitPower || 0) + Math.min(0.8, dmg / (this.maxHp * 0.22)));
+    if (source && source.x !== undefined) {
+      const dx = this.pos.x - source.x, dz = this.pos.z - source.z;
+      const a = Math.atan2(dx, dz) - this.facing;
+      this.hitFrom = a;
+    } else {
+      this.hitFrom = Math.PI;   // assume it came from in front
+    }
     if (this.hp <= 0) {
       this.alive = false;
       return { dealt: dmg, killed: true, crit };
@@ -448,6 +462,7 @@ export class Enemy {
 
   _animate(dt, now, ctx) {
     this.attackAnim = Math.max(0, this.attackAnim - dt * 3.4);
+    this.hitPower = Math.max(0, (this.hitPower || 0) - dt * 4.2);
     const speed = Math.hypot(this.vel.x, this.vel.z);
     this.animPhase += dt * (2.4 + speed * 1.9);
     const m = this.mesh;
@@ -527,10 +542,22 @@ export class Enemy {
     if (this.jumbified > 0) {
       const p = 1 + Math.sin(now * 9) * 0.16;
       m.scale.set(1.5 * p, 1.5 / p, 1.5 * p);
-    } else if (this.stagger > 0) {
-      m.scale.setScalar(1 + this.stagger * 0.18);
     } else {
       m.scale.setScalar(1);
+    }
+
+    // Flinch. Folds away from the impact and springs back, on top of whatever
+    // the walk cycle is doing — so being shot mid-stride still reads.
+    if (this.hitPower > 0.001 && upper) {
+      const f = this.hitPower * this.hitPower;
+      upper.rotation.x += Math.cos(this.hitFrom) * f * 0.45;
+      upper.rotation.z += Math.sin(this.hitFrom) * f * 0.4;
+      upper.position.y -= f * 0.05;
+      if (head) {
+        // The head snaps harder and recovers slower than the body.
+        head.rotation.x += Math.cos(this.hitFrom) * f * 0.5;
+        head.rotation.z += Math.sin(this.hitFrom) * f * 0.35;
+      }
     }
 
     if (m.userData.glitch && Math.random() < 0.08) {

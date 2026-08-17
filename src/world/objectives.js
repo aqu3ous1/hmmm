@@ -200,8 +200,13 @@ function punish(g, cfg, n, text) {
 /** Hold-E-to-charge, shared by every kind that wants a commitment. */
 function charging(g, dt, list, seconds, onDone) {
   const p = g.player;
+  // "Tap to interact" completes the hold outright. Holding a key for a second
+  // and a half is a real barrier for some hands, and nothing about this game
+  // is more interesting for having required it.
+  const tap = g.opts?.tapHold;
   for (const s of list) {
     if (s.state !== 'charging') continue;
+    if (tap) { s.charge = 1; onDone(s); continue; }
     const d = Math.hypot(s.pos.x - p.pos.x, s.pos.z - p.pos.z);
     if (d < 3.4 && g.input.down('KeyE')) {
       s.charge = Math.min(1, s.charge + dt / seconds);

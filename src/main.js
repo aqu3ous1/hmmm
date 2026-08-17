@@ -4,6 +4,7 @@ import * as THREE from '../vendor/three.module.js';
 
 import { Input } from './core/input.js';
 import { audio } from './core/audio.js';
+import { Ambience } from './core/ambience.js';
 import { makeRng, hashSeed, clamp, damp, formatTime, swapRemove, weightedPick, TAU } from './core/util.js';
 
 import { floorConfig, FLOOR_COUNT } from './world/floors.js';
@@ -44,6 +45,18 @@ class Game {
     this.canvas = $('view');
     this.hud = new HUD();
     this.cine = new Director(this.hud);
+    this.ambience = new Ambience(audio);
+
+    // Accessibility settings. Held here rather than read from the DOM at the
+    // call site, so the game logic never has to know a slider exists.
+    this.opts = {
+      shake: 1,        // screen shake scale
+      bob: 1,          // camera bob / sway scale
+      flash: 1,        // muzzle flash, screen flash and glitch intensity
+      tapHold: false,  // complete hold-to-engage on a single press
+      skipCine: false, // play story as dialogue, without the camera
+      colour: 'none',
+    };
     this.input = new Input(this.canvas);
     this.state = 'title';         // title | playing | paused | dead | floorcard | victory
     this.now = 0;
@@ -218,6 +231,24 @@ class Game {
     $('volSfx').oninput = (e) => audio.setSfxVolume(e.target.value / 100);
     $('sens').oninput = (e) => { this.input.sensitivity = (e.target.value / 100) * 0.002; };
 
+    $('optShake').oninput = (e) => { this.opts.shake = e.target.value / 100; };
+    $('optBob').oninput = (e) => { this.opts.bob = e.target.value / 100; };
+    $('optText').oninput = (e) => {
+      document.documentElement.style.setProperty('--uiScale', String(e.target.value / 100));
+    };
+    $('optFlash').onchange = (e) => {
+      this.opts.flash = e.target.checked ? 0.25 : 1;
+      // The grain and scanline are part of the same complaint.
+      this.post.set('grain', e.target.checked ? 0.004 : 0.016);
+      this.post.set('scanline', e.target.checked ? 0.006 : 0.022);
+    };
+    $('optHold').onchange = (e) => { this.opts.tapHold = e.target.checked; };
+    $('optCine').onchange = (e) => { this.opts.skipCine = e.target.checked; };
+    $('optColour').onchange = (e) => {
+      this.opts.colour = e.target.value;
+      this.post.setColourMode(e.target.value);
+    };
+
     this.canvas.addEventListener('click', () => {
       if (this.state === 'playing' && !this.input.locked) this.input.requestLock();
     });
@@ -295,6 +326,7 @@ class Game {
   }
 
   _clearFloor() {
+    this.ambience.stop();
     // A cutscene outlives whatever it was framing unless it is cancelled here,
     // and a boss intro that survives the boss is a camera stuck on nothing.
     this.cine?.cancel();
@@ -492,6 +524,8 @@ class Game {
     this.input.requestLock();
     audio.init();
     audio.startMusic({ ...cfg.music, pad: true, arp: true, bass: true });
+    // The Pod is a machine and every floor is a different part of it.
+    this.ambience.start(cfg.id);
 
     if (this.floorIndex === 0 && this.prologue) {
       // Dark room. Only the chest glows.
@@ -993,12 +1027,45 @@ class Game {
       level.grid[cx + cz * GRID] = 1;
       const wx = level.cellToWorldX(cx) + CELL / 2;
       const wz = level.cellToWorldZ(cz) + CELL / 2;
-      const b = new THREE.Mesh(
-        new THREE.BoxGeometry(CELL, WALL_H, CELL),
-        new THREE.MeshBasicMaterial({ color: 0xff4a5a, transparent: true, opacity: 0.16, depthWrite: false }),
-      );
-      b.position.set(wx, WALL_H / 2, wz);
-      boxes.push(b);
+      // A barrier, not a fog bank. Filling the whole cell with translucent red
+      // reads as a rendering artifact from any distance — a big soft slab of
+      // colour with no edges. A thin plane in the doorway with a bright frame
+      // and scan bars reads as a door that is shut.
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        // Only face the sides that open onto somewhere you could walk from.
+        if (level.isSolidCell(cx + dx, cz + dz)) continue;
+        const g = new THREE.Group();
+        g.position.set(wx + dx * CELL * 0.48, WALL_H / 2, wz + dz * CELL * 0.48);
+        g.rotation.y = Math.atan2(dx, dz);
+        const field = new THREE.Mesh(
+          new THREE.PlaneGeometry(CELL, WALL_H),
+          new THREE.MeshBasicMaterial({
+            color: 0xff4a5a, transparent: true, opacity: 0.13,
+            depthWrite: false, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+          }),
+        );
+        g.add(field);
+        // Frame and scan bars, brighter than the field so it has edges.
+        const bar = (y, h2, o) => {
+          const m = new THREE.Mesh(
+            new THREE.PlaneGeometry(CELL, h2),
+            new THREE.MeshBasicMaterial({
+              color: 0xff6a5a, transparent: true, opacity: o,
+              depthWrite: false, side: THREE.DoubleSide,
+              blending: THREE.AdditiveBlending,
+            }),
+          );
+          m.position.y = y;
+          g.add(m);
+          return m;
+        };
+        bar(WALL_H / 2 - 0.06, 0.12, 0.85);
+        bar(-WALL_H / 2 + 0.06, 0.12, 0.85);
+        for (let k = 0; k < 6; k++) bar(-WALL_H / 2 + 0.5 + k * 0.72, 0.03, 0.3);
+        g.userData.scan = bar(0, 0.09, 0.55);
+        boxes.push(g);
+      }
     }
     this.barrierMesh = new THREE.Group();
     for (const b of boxes) this.barrierMesh.add(b);
@@ -1164,6 +1231,17 @@ class Game {
     if (!this.cine?.active) this._updateProjectiles(dt);
     this._updateChests(dt);
     this._updateNodes(dt);
+    if (this.barrierMesh) {
+      // One bar travelling up each panel: a barrier that is not moving is a
+      // wall, and the player needs to read this as something that will open.
+      const y = ((this.now * 1.6) % 1) * WALL_H - WALL_H / 2;
+      for (const g of this.barrierMesh.children) {
+        if (g.userData?.scan) {
+          g.userData.scan.position.y = y;
+          g.userData.scan.material.opacity = 0.55 * (1 - Math.abs(y) / (WALL_H / 2)) + 0.12;
+        }
+      }
+    }
     this._updateCorpses(dt);
     this._updateSecrets(dt);
     this._updateContract(dt);
@@ -1176,7 +1254,7 @@ class Game {
     this._updateLights(dt);
 
     this.particles.update(dt);
-    this.projectiles.sync(this.now);
+    this.projectiles.sync(this.now, this.camera.position);
 
     // --- death ---
     if (!player.alive) { this._onPlayerDown(); return; }
@@ -1185,7 +1263,7 @@ class Game {
     // A cutscene owns the camera outright while it runs; the player still
     // simulates underneath it so the world does not freeze mid-shot.
     if (!(this.cine && this.cine.update(dt, this.camera))) {
-      player.applyCamera(this.camera, dt);
+      player.applyCamera(this.camera, dt, this.opts.bob, this.opts.shake);
     }
     this._updateViewmodel(dt);
     this.torch.position.set(this.camera.position.x, this.camera.position.y + 0.2, this.camera.position.z);
@@ -1659,7 +1737,7 @@ class Game {
     }
     if (!silent) {
       audio.hurt();
-      this.hud.screenFlash(0.18);
+      this.hud.screenFlash(0.18 * this.opts.flash);
       this.hurtFlash = Math.min(1, (this.hurtFlash ?? 0) + 0.3 + amount * 0.005);
     }
     return true;
@@ -1731,8 +1809,13 @@ class Game {
     // Re-seal behind you: the boss room is a commitment.
     this._reseal();
 
-    audio.stopMusic(0.4);
-    setTimeout(() => audio.startMusic({ ...this.boss.def.music, pad: false }), 500);
+    // Cross into the boss theme rather than stopping and restarting: the old
+    // stop-then-setTimeout left half a second of silence at the exact moment
+    // the fight was supposed to land.
+    audio.crossfadeMusic({ ...this.boss.def.music, pad: false }, 1.1);
+    // Duck the room: a bed under a boss fight is clutter, and bringing it back
+    // afterwards is most of what makes the room feel quiet again.
+    this.ambience.setLevel(0.25, 1.2);
     audio.bossRoar(1);
     this.particles.ring(pos.x, 0.1, pos.z, { from: 1, to: 16, life: 0.9, color: this.boss.def.build.accent });
     this._playBossIntro();
@@ -1753,7 +1836,7 @@ class Game {
    * physical fact rather than a number in a corner.
    */
   _playLockCutscene() {
-    if (!this.cine) { this._queue(STORY.glitchEvent, true); return; }
+    if (!this.cine || this.opts.skipCine) { this._queue(STORY.glitchEvent, true); return; }
     const at = () => this.player.pos;
     this.hud.setCinematic(true);
     this.cine.play([
@@ -1815,7 +1898,7 @@ class Game {
    * to be does more than eight lines of dialogue ever could.
    */
   _playRevealCutscene() {
-    if (!this.cine) { this._queue(STORY.betaReveal, true); return; }
+    if (!this.cine || this.opts.skipCine) { this._queue(STORY.betaReveal, true); return; }
     // Find something to look at — a husk if the floor has one, otherwise him.
     const husk = this.enemies.find((e) => e.type.id === 'husk' && e.alive);
     const subject = husk || this.player;
@@ -1863,6 +1946,14 @@ class Game {
   _playBossIntro() {
     const boss = this.boss;
     const def = boss.def;
+    if (this.opts.skipCine) {
+      this.hud.banner(def.name, def.title, 4.4);
+      this._queue((def.lines.intro || []).map((t) => ({
+        speaker: 'BOSS', text: t, hold: Math.max(3, t.length * 0.045),
+      })), true);
+      audio.bossRoar(1.2);
+      return;
+    }
     const at = () => boss.pos;
     const lines = def.lines.intro || [];
     const speak = (i) => (lines[i] ? [def.name, lines[i]] : null);
@@ -1917,7 +2008,7 @@ class Game {
    */
   _playOpening() {
     const chest = this.chests[0];
-    if (!chest || !this.cine) return;
+    if (!chest || !this.cine || this.opts.skipCine) return;
     const c = chest.pos;
     this.cine.play([
       shot.hold(
@@ -1957,7 +2048,10 @@ class Game {
       const cx = idx % GRID, cz = (idx / GRID) | 0;
       const b = new THREE.Mesh(
         new THREE.BoxGeometry(CELL, WALL_H, CELL),
-        new THREE.MeshBasicMaterial({ color: 0xff4a5a, transparent: true, opacity: 0.2, depthWrite: false }),
+        new THREE.MeshBasicMaterial({
+          color: 0xff4a5a, transparent: true, opacity: 0.1,
+          depthWrite: false, blending: THREE.AdditiveBlending,
+        }),
       );
       b.position.set(this.level.cellToWorldX(cx) + CELL / 2, WALL_H / 2, this.level.cellToWorldZ(cz) + CELL / 2);
       boxes.add(b);
@@ -1978,6 +2072,9 @@ class Game {
     this.particles.explosion(this.boss.pos.x, this.boss.pos.y + 1.4, this.boss.pos.z, 8, def.build.accent);
     this.particles.ring(this.boss.pos.x, 0.1, this.boss.pos.z, { from: 1, to: 22, life: 1.2, color: def.build.accent });
     audio.explode(2);
+    // The room comes back up. After four minutes of boss theme, the floor's
+    // own hum returning is the sound of it being over.
+    this.ambience.setLevel(1, 2.4);
     audio.levelUp();
     this.hud.screenFlash(0.6);
     this.hud.banner('BOSS DOWN', def.name, 3.6);
@@ -2682,13 +2779,27 @@ class Game {
     if (!anim) return;
     const kick = this.vmKick;
 
+    // Reload phase, shared by every animated part: 0 → 1 across the reload.
+    let rl = -1;
+    if (w?.reloading) {
+      const e = this.runtime.eff(w);
+      rl = 1 - clamp((w.reloadEnd - this.now) / Math.max(0.05, e.reload), 0, 1);
+    }
+
     if (anim.slide) {
-      // Cycles back on the kick and returns under spring.
-      anim.slide.position.z = -kick * (anim.slide.userData.recoil || 0.06) * 9;
+      // Cycles back on the kick and returns under spring. During a reload it
+      // locks back for the whole magazine change and slams forward at the end
+      // — which is the beat that tells you the gun is live again, and doing it
+      // on the last 12% means the sound and the motion land together.
+      let back = kick * (anim.slide.userData.recoil || 0.06) * 9;
+      if (rl >= 0) back = Math.max(back, rl < 0.88 ? 0.1 : 0.1 * (1 - (rl - 0.88) / 0.12));
+      anim.slide.position.z = -back;
     }
     if (anim.bolt) {
-      anim.bolt.position.z = -kick * 0.09 * 9;
-      anim.bolt.position.x = kick * 0.01;
+      let back = kick * 0.09 * 9;
+      if (rl >= 0) back = Math.max(back, rl < 0.86 ? 0.09 : 0.09 * (1 - (rl - 0.86) / 0.14));
+      anim.bolt.position.z = -back;
+      anim.bolt.position.x = kick * 0.01 + (rl >= 0 && rl < 0.86 ? 0.012 : 0);
     }
     if (anim.spin) {
       // The Behemoth spools up while firing and coasts down after.
@@ -2710,15 +2821,22 @@ class Game {
       anim.reel.rotation.x = this._vmReel % TAU;
     }
     if (anim.mag) {
-      // Drops out and slaps back in over the reload.
+      // Drops out and slaps back in over the reload, and rocks forward on the
+      // way out the way a magazine actually leaves a well.
       let drop = 0;
-      if (w?.reloading) {
-        const e = this.runtime.eff(w);
-        const t = 1 - clamp((w.reloadEnd - this.now) / Math.max(0.05, e.reload), 0, 1);
-        drop = t < 0.45 ? (t / 0.45) : Math.max(0, 1 - (t - 0.45) / 0.4);
-      }
+      if (rl >= 0) drop = rl < 0.45 ? (rl / 0.45) : Math.max(0, 1 - (rl - 0.45) / 0.4);
       anim.mag.position.y = -drop * 0.55;
+      anim.mag.position.z = -drop * 0.08;
       anim.mag.rotation.x = drop * 0.5;
+    }
+    if (anim.discs && rl >= 0) {
+      // The blade magazine tips out to be refilled.
+      anim.discs.position.y = -Math.sin(Math.min(1, rl / 0.7) * Math.PI) * 0.22;
+    }
+    if (anim.reel && rl >= 0) {
+      // Reel Talk winds the line back in on a reload rather than on a kick.
+      this._vmReel = (this._vmReel || 0) + dt * 9;
+      anim.reel.rotation.x = this._vmReel % TAU;
     }
     if (anim.flicker) {
       // The Null Pointer's ghost half is only sometimes there.
@@ -2812,10 +2930,10 @@ class Game {
     // during a firefight is a line the player reads while aiming.
     if (!this.glitchFired && this.floorIndex >= 1 && (this.floorTime > 95 || this.runTime > 400)) {
       this.glitchFired = true;
-      this.hud.glitchBurst(2.2);
+      this.hud.glitchBurst(2.2 * this.opts.flash);
       this.glitchFx = 1;
       audio.glitch(2);
-      this.player.shake = 1.2;
+      this.player.shake = 1.2 * this.opts.shake;
       this._playLockCutscene();
     }
     if (!this.betaRevealFired && this.floorIndex === 5 && this.floorTime > 26) {
@@ -2874,7 +2992,7 @@ class Game {
     }
     this.hud.intercom(speaker, text, cls);
     if (line.speaker === 'GLITCH') {
-      audio.glitch(1); this.hud.glitchBurst(0.5);
+      audio.glitch(1); this.hud.glitchBurst(0.5 * this.opts.flash);
       this.glitchFx = Math.max(this.glitchFx ?? 0, 0.85);
     } else if (line.speaker === 'COLD') {
       audio.radioBlip(0.45);

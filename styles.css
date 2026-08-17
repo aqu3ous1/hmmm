@@ -863,3 +863,35 @@ ul.rules b { color: var(--ink); font-weight: 400; }
     rgba(255, 62, 62, 0.55), rgba(255, 62, 62, 0.16) 55%, transparent 72%);
   clip-path: polygon(50% 100%, 6% 6%, 94% 6%);
 }
+
+/* ---- accessibility ----------------------------------------------------- */
+/* Every HUD size is expressed against --uiScale so the text-size slider moves
+   the whole readout together rather than reflowing one panel at a time. */
+:root { --uiScale: 1; }
+#hud { font-size: calc(1rem * var(--uiScale)); }
+#objText, #contract, #interactPrompt span, .slot-name, .slot-ammo,
+#intercomText, .toast, #hpVal, #shardVal {
+  font-size: calc(var(--baseSize, 12px) * var(--uiScale));
+}
+#objText { --baseSize: 12px; }
+#intercomText { --baseSize: 14px; }
+.toast { --baseSize: 12px; }
+.slot-name { --baseSize: 12.5px; }
+#interactPrompt span { --baseSize: 12px; }
+
+.accessHead { margin-top: 6px; }
+.sliders.access { max-width: 520px; }
+.sliders.access label.check {
+  display: flex; align-items: flex-start; gap: 12px; cursor: pointer;
+}
+.sliders.access label.check input { width: auto; margin-top: 3px; }
+.sliders.access label.check span { display: flex; flex-direction: column; gap: 3px; }
+.sliders.access label.check i {
+  font-style: normal; font-size: 10px; color: var(--faint); letter-spacing: 0.04em;
+}
+.sliders.access label.select { display: flex; align-items: center; gap: 14px; }
+.sliders.access select {
+  flex: 1; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  padding: 8px 10px; background: rgba(255, 255, 255, 0.04); color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}

@@ -74,6 +74,13 @@ would still be served from cache.
 | `Tab` | Hold for full loadout and synergy breakdown |
 | `M` | Mute · `Esc` pause |
 
+**Accessibility** lives in the pause menu: screen shake and camera bob each go
+to zero, text scales to 160%, flashing can be damped (glitch beats, muzzle
+flash, grain and scanlines together), hold-to-interact can become a single
+press, cutscenes can be replaced by plain dialogue, and there are
+daltonisation modes for red/green and blue/yellow plus a monochrome mode that
+leans on the fact every readable element also differs in brightness.
+
 ---
 
 ## The rules of the climb
@@ -260,7 +267,11 @@ Some notes on how it works, in case you want to poke at it:
   around them sits opposite on the wheel.
 - **Audio** is entirely synthesised: gunshots are filtered noise bursts shaped
   per weapon, and the score is a scheduled arpeggiator whose scale, tempo and
-  timbre come from the floor config, with density that rises as enemies close in.
+  timbre come from the floor config, with density that rises as enemies close
+  in. Every floor also runs its own **room tone** (`src/core/ambience.js`) — a
+  hum, a filtered noise floor and sparse one-shots on jittered timers, so the
+  Server Farm has fans, the Kiln has combustion, and the Alpha Wing has almost
+  nothing at all. It ducks under boss fights and comes back when they end.
 
 ---
 

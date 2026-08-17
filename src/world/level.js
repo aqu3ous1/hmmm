@@ -965,6 +965,8 @@ export class Level {
       C(dark, { x: p.x + 0.2, y: WALL_H - 1.0, z: p.z, ry: ry + 0.2, rx: Math.PI / 2, sx: 0.05, sy: len * 0.8, sz: 0.05 }, 0.35);
     }
 
+    this._dressCorridors(body, accent, glow, dark, rng);
+
     const add = (arr, mat) => { if (arr.length) this.decorGroup.add(new THREE.Mesh(mergeGeometries(arr), mat)); };
     // Props are where the floor's colour is allowed to live: painted equipment
     // against neutral concrete, rather than concrete that happens to be green.
@@ -981,6 +983,118 @@ export class Level {
       color: pal.emissive, vertexColors: true, transparent: true, opacity: 0.92,
     }));
   }
+  /**
+   * Dress the corridors.
+   *
+   * All the detail lived inside rooms, and the corridors — which are a third
+   * of the floor by area and most of the time between fights — were bare
+   * tunnels. A corridor does not need furniture; it needs the things a real
+   * one accumulates: cable trays, junction boxes, wayfinding paint, a stencil
+   * on the wall, a dropped crate somebody never came back for.
+   *
+   * These are placed by walking the grid for open cells that are *not* inside
+   * any room, so they never fight with a room's own prop budget.
+   */
+  _dressCorridors(body, accent, glow, dark, rng) {
+    const B = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.box, o), sh));
+    const C2 = (arr, o, sh = 1) => arr.push(paint(xform(UNIT.lowCyl, o), sh));
+
+    // Which cells belong to a room? Everything else open is corridor.
+    const inRoom = new Uint8Array(GRID * GRID);
+    for (const r of this.rooms) {
+      for (let z = r.z; z < r.z + r.h; z++) {
+        for (let x = r.x; x < r.x + r.w; x++) inRoom[x + z * GRID] = 1;
+      }
+    }
+
+    let placed = 0;
+    for (let cz = 1; cz < GRID - 1; cz++) {
+      for (let cx = 1; cx < GRID - 1; cx++) {
+        const i = cx + cz * GRID;
+        if (this.grid[i] === 1 || inRoom[i]) continue;
+        const x = this.cellToWorldX(cx) + CELL / 2;
+        const z = this.cellToWorldZ(cz) + CELL / 2;
+
+        // Which side has a wall? Props go against it, not in the middle.
+        let wallDir = null;
+        for (const [dx, dz] of DIRS) {
+          if (this.isSolidCell(cx + dx, cz + dz)) { wallDir = [dx, dz]; break; }
+        }
+
+        const h = this._cellHash(cx, cz, 91);
+
+        // Cable tray along the ceiling of every corridor run — continuous, so
+        // it reads as infrastructure going somewhere rather than as clutter.
+        if (h < 0.55) {
+          const along = this.isSolidCell(cx - 1, cz) || this.isSolidCell(cx + 1, cz);
+          B(dark, {
+            x, y: WALL_H - 0.62, z, ry: along ? 0 : Math.PI / 2,
+            sx: 0.34, sy: 0.1, sz: CELL * 1.02,
+          }, 0.5);
+          for (let k = 0; k < 3; k++) {
+            C2(dark, {
+              x: x + (along ? 0 : (k - 1) * 0.1), y: WALL_H - 0.7,
+              z: z + (along ? (k - 1) * 0.1 : 0),
+              ry: along ? 0 : Math.PI / 2, rx: Math.PI / 2,
+              sx: 0.05, sy: CELL * 1.02, sz: 0.05,
+            }, 0.4);
+          }
+        }
+
+        // Floor guidance paint: a dashed centre line the whole Pod shares.
+        if (h > 0.2 && h < 0.72) {
+          const along = this.isSolidCell(cx - 1, cz) || this.isSolidCell(cx + 1, cz);
+          B(glow, {
+            x, y: 0.03, z, ry: along ? 0 : Math.PI / 2,
+            sx: 0.09, sy: 0.01, sz: CELL * 0.5,
+          }, 0.5);
+        }
+
+        if (!wallDir) continue;
+        const [dx, dz] = wallDir;
+        const wx = x + dx * (CELL * 0.42), wz = z + dz * (CELL * 0.42);
+        const ry = Math.atan2(dx, dz);
+
+        // One item per cell at most, and only on about a fifth of them.
+        if (h > 0.955) {
+          // Junction box with a status lamp.
+          B(body, { x: wx, y: 1.5, z: wz, ry, sx: 0.5, sy: 0.62, sz: 0.22 }, 0.85);
+          B(accent, { x: wx - dx * 0.1, y: 1.5, z: wz - dz * 0.1, ry, sx: 0.44, sy: 0.1, sz: 0.06 }, 0.7);
+          B(glow, { x: x + -dx * 0.28, y: 1.72, z: z + -dz * 0.28, ry, sx: 0.1, sy: 0.06, sz: 0.02 }, 1);
+          C2(dark, { x: wx, y: 0.9, z: wz, sx: 0.06, sy: 1.0, sz: 0.06 }, 0.4);
+          placed++;
+        } else if (h > 0.93) {
+          // Wall stencil — a number and an arrow, in trim paint.
+          B(glow, { x: x - dx * 0.42, y: 1.7, z: z - dz * 0.42, ry, sx: 0.42, sy: 0.05, sz: 0.02 }, 0.55);
+          B(glow, { x: x - dx * 0.42, y: 1.52, z: z - dz * 0.42, ry, sx: 0.26, sy: 0.05, sz: 0.02 }, 0.55);
+          B(glow, { x: x - dx * 0.42, y: 1.9, z: z - dz * 0.42, ry, sx: 0.14, sy: 0.14, sz: 0.02 }, 0.4);
+          placed++;
+        } else if (h > 0.9) {
+          // A crate somebody set down and did not come back for.
+          const sc = 0.7 + this._cellHash(cx, cz, 93) * 0.4;
+          B(body, { x: wx, y: sc * 0.5, z: wz, ry: ry + rng.range(-0.4, 0.4), sx: sc, sy: sc, sz: sc }, 0.8);
+          B(accent, { x: wx, y: sc * 0.5, z: wz, ry, sx: sc * 1.02, sy: 0.07, sz: sc * 1.02 }, 0.6);
+          placed++;
+        } else if (h > 0.88) {
+          // Standpipe with a valve wheel.
+          C2(dark, { x: wx, y: WALL_H / 2, z: wz, sx: 0.16, sy: WALL_H, sz: 0.16 }, 0.45);
+          C2(accent, { x: wx, y: 1.3, z: wz, sx: 0.34, sy: 0.08, sz: 0.34 }, 0.8);
+          C2(accent, { x: wx, y: 2.9, z: wz, sx: 0.22, sy: 0.1, sz: 0.22 }, 0.7);
+          placed++;
+        } else if (h > 0.865) {
+          // Emergency light in a cage, pointing down the corridor.
+          B(dark, { x: wx, y: 2.7, z: wz, ry, sx: 0.3, sy: 0.24, sz: 0.2 }, 0.4);
+          B(glow, { x: x - dx * 0.3, y: 2.7, z: z - dz * 0.3, ry, sx: 0.22, sy: 0.16, sz: 0.02 }, 1);
+          for (let k = 0; k < 3; k++) {
+            B(dark, { x: x - dx * 0.28, y: 2.62 + k * 0.08, z: z - dz * 0.28, ry, sx: 0.24, sy: 0.02, sz: 0.03 }, 0.3);
+          }
+          placed++;
+        }
+        if (placed > 260) return;   // a budget, so a big floor cannot run away
+      }
+    }
+  }
+
   dispose() {
     disposeTree(this.group);
     if (this.group.parent) this.group.parent.remove(this.group);

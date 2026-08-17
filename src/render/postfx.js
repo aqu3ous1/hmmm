@@ -65,6 +65,7 @@ uniform float hurt;          // red pulse when the player is hit
 uniform float glitch;        // scanline tearing during story glitches
 uniform vec3 tint;           // per-floor colour grade
 uniform float saturation;
+uniform mat3 colourFilter;   // colour-vision correction (identity by default)
 uniform float contrast;
 uniform vec2 resolution;
 varying vec2 vUv;
@@ -121,6 +122,11 @@ void main() {
   float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
   color = mix(vec3(lum), color, saturation);
   color = clamp((color - 0.42) * contrast + 0.42, 0.0, 1.0);
+
+  // Colour-vision assist. Applied after the grade so it operates on exactly
+  // what reaches the screen. The identity matrix is the default and costs one
+  // multiply, so there is no branch and no separate shader variant.
+  color = clamp(colourFilter * color, 0.0, 1.0);
 
   // Damage response: desaturate and push red in from the edges.
   if (hurt > 0.001) {
@@ -209,6 +215,7 @@ export class PostFX {
         glitch: { value: 0 },
         tint: { value: new THREE.Color(1, 1, 1) },
         saturation: { value: 1.08 },
+        colourFilter: { value: new THREE.Matrix3() },
         contrast: { value: 1.06 },
         resolution: { value: new THREE.Vector2(2, 2) },
       },
@@ -242,6 +249,31 @@ export class PostFX {
     u.exposure.value = exposure;
     u.bloomStrength.value = bloom;
     u.vignette.value = vignette;
+  }
+
+  /**
+   * Colour-vision mode.
+   *
+   * These are daltonisation matrices, not simulations: they rotate the parts
+   * of the spectrum a given viewer cannot separate into ones they can, so red
+   * enemy tells and green objective markers stop landing on the same
+   * perceived colour. `mono` gives up on hue entirely and leans on the fact
+   * that every readable element in this game also differs in brightness.
+   */
+  setColourMode(mode) {
+    const M = {
+      none: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      // Red/green: push the lost red-green difference into blue and lightness.
+      deut: [0.62, 0.38, 0.0, 0.3, 0.7, 0.0, 0.0, 0.28, 0.72],
+      prot: [0.57, 0.43, 0.0, 0.56, 0.44, 0.0, 0.0, 0.24, 0.76],
+      // Blue/yellow: fold the blue-yellow axis toward red-green.
+      trit: [0.95, 0.05, 0.0, 0.0, 0.43, 0.57, 0.0, 0.48, 0.52],
+      mono: [0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722, 0.2126, 0.7152, 0.0722],
+    }[mode] || null;
+    if (!M) return;
+    // Matrix3.set takes row-major, which is what is written above.
+    this.compositeMat.uniforms.colourFilter.value.set(
+      M[0], M[1], M[2], M[3], M[4], M[5], M[6], M[7], M[8]);
   }
 
   set(name, value) {
