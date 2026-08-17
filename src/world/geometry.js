@@ -239,6 +239,57 @@ const _matCache = new Map();
 /** Round to a step, so "0.55 rough" and "0.58 rough" are the same material. */
 const q = (v, step) => Math.round(v / step) * step;
 
+// A batch below this many triangles is not a surface, it is a rounding error
+// with a draw call attached. Twelve triangles is one box; ninety is a handful.
+const TINY_BATCH_TRIS = 90;
+
+/**
+ * Fold negligible batches into their nearest surviving neighbour.
+ *
+ * Measuring the cast turned up rig after rig paying a full draw call for
+ * twelve triangles: the Neon Punk had two such batches, the Ashwalker two, the
+ * Brute three. One box's worth of geometry, at a roughness a quarter-step away
+ * from a batch of four thousand triangles it could have joined. Quantising
+ * harder would have papered over it at the cost of flattening every surface in
+ * the game; this only touches the batches nobody can see.
+ *
+ * Two rules keep it honest. Emissive and unlit parts never fold — a glowing
+ * eye is a handful of triangles *and* the whole point of the model. Neither do
+ * parts at a different opacity, because folding a translucent part into an
+ * opaque batch does not dim it, it solidifies it. Everything else is fair game:
+ * the difference between roughness 0.6 and 0.8 on a single box is not
+ * something anyone has ever noticed.
+ */
+function foldTinyBatches(batches) {
+  if (batches.size < 2) return;
+  const all = [...batches.values()];
+  const foldable = (b) => !b.spec.basic && !b.spec.emissive;
+  for (const b of all) {
+    if (b.tris >= TINY_BATCH_TRIS || !foldable(b)) continue;
+    let best = null, bestCost = Infinity;
+    for (const o of all) {
+      if (o === b || !batches.has(o.key) || !foldable(o)) continue;
+      if (o.tris < b.tris) continue;                    // never fold into a smaller one
+      // Transparency is not a shading nuance; it is a different object.
+      if (((o.spec.opacity ?? 1) < 1) !== ((b.spec.opacity ?? 1) < 1)) continue;
+      const cost = Math.abs((o.spec.metal ?? 0) - (b.spec.metal ?? 0))
+        + Math.abs((o.spec.rough ?? 0.8) - (b.spec.rough ?? 0.8))
+        // Weight shading agreement heavily. The host's flag wins for the whole
+        // merged batch, so folding a box into a smooth batch rounds off its
+        // corner shading and folding a sphere into a flat one facets it — both
+        // more visible on a small part than a quarter-step of roughness ever is.
+        + (o.spec.smooth === b.spec.smooth ? 0 : 0.3);
+      if (cost < bestCost) { bestCost = cost; best = o; }
+    }
+    // A surface a long way from everything else in the model is a deliberate
+    // contrast — chrome trim on matte plastic — and stays its own batch.
+    if (!best || bestCost > 0.9) continue;
+    best.parts.push(...b.parts);
+    best.tris += b.tris;
+    batches.delete(b.key);
+  }
+}
+
 export function assemble(parts, { flatShading = true } = {}) {
   const group = new THREE.Group();
   const batches = new Map();
@@ -259,9 +310,15 @@ export function assemble(parts, { flatShading = true } = {}) {
       p.basic ? 1 : 0, q(p.metal ?? 0, 0.25), q(p.rough ?? 0.8, 0.2),
       p.smooth ? 1 : 0, q(p.envIntensity ?? 1, 0.5),
     ].join('|');
-    if (!batches.has(key)) batches.set(key, { parts: [], spec: p, key });
-    batches.get(key).parts.push(p);
+    if (!batches.has(key)) batches.set(key, { parts: [], spec: p, key, tris: 0 });
+    const b = batches.get(key);
+    b.parts.push(p);
+    const g = p.geo || UNIT.box;
+    b.tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
   }
+
+  foldTinyBatches(batches);
+
   for (const { parts: ps, spec, key } of batches.values()) {
     const merged = mergeGeometries(ps.map((p) => paintRGB(xform(p.geo || UNIT.box, p), p.color)));
     if (spec.smooth) merged.computeVertexNormals();
