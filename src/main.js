@@ -8,6 +8,8 @@ import { makeRng, hashSeed, clamp, damp, formatTime, swapRemove, weightedPick, T
 
 import { floorConfig, FLOOR_COUNT } from './world/floors.js';
 import { generateLayout, Level, CELL, WALL_H, GRID } from './world/level.js';
+import { objectiveKind } from './world/objectives.js';
+import { LORE, ALL_LORE, EGGS, buildTerminal, buildCache, buildCacheKey, buildEgg } from './world/secrets.js';
 import { disposeTree } from './world/geometry.js';
 
 import { Player } from './entities/player.js';
@@ -17,7 +19,7 @@ import { BOSS_ORDER } from './entities/bossTypes.js';
 
 import { ProjectileSystem } from './combat/projectiles.js';
 import { Particles, DamageNumbers } from './fx/particles.js';
-import { WEAPONS, makeWeapon, RARITY_COLORS, RARITY_NAMES } from './combat/weapons.js';
+import { WEAPONS, makeWeapon, chestPool, RARITY_COLORS, RARITY_NAMES } from './combat/weapons.js';
 import { evaluatePairing, pairingSummary } from './combat/synergy.js';
 import { WeaponRuntime } from './combat/weaponRuntime.js';
 
@@ -25,6 +27,7 @@ import { Chest, WeaponIconCache } from './props/chest.js';
 import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/models.js';
 
 import { PostFX } from './render/postfx.js';
+import { Director, shot } from './render/director.js';
 import { EnvironmentBuilder } from './render/env.js';
 import { BUILD, BUILD_NAME, BUILD_DATE } from './version.js';
 import { HUD, buildCodex, renderLoadoutDetail } from './ui/hud.js';
@@ -38,6 +41,7 @@ class Game {
   constructor() {
     this.canvas = $('view');
     this.hud = new HUD();
+    this.cine = new Director(this.hud);
     this.input = new Input(this.canvas);
     this.state = 'title';         // title | playing | paused | dead | floorcard | victory
     this.now = 0;
@@ -50,6 +54,10 @@ class Game {
     this.boss = null;
     this.chests = [];
     this.nodes = [];
+    this.secrets = [];
+    this.foundLore = new Set();
+    this.foundEggs = new Set();
+    this.cacheKeys = 0;
     this.pickups = [];
     this.vendors = [];
     this.slicks = [];
@@ -186,6 +194,7 @@ class Game {
     $('btnStart').onclick = () => { audio.init(); this.startRun(); };
     $('btnHow').onclick = () => { audio.init(); show('howScreen'); this._backTo = 'titleScreen'; };
     $('btnCodex').onclick = () => { audio.init(); show('codexScreen'); this._backTo = 'titleScreen'; };
+    $('btnArchive').onclick = () => { audio.init(); this._renderArchive(); show('archiveScreen'); this._backTo = 'titleScreen'; };
     for (const b of document.querySelectorAll('button.back')) {
       b.onclick = () => show(this._backTo || 'titleScreen');
     }
@@ -252,12 +261,29 @@ class Game {
   }
 
   _clearFloor() {
+    // A cutscene outlives whatever it was framing unless it is cancelled here,
+    // and a boss intro that survives the boss is a camera stuck on nothing.
+    this.cine?.cancel();
+    this.hud.setCinematic(false);
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
     if (this.boss) { this.boss.dispose(); this.boss = null; }
     for (const c of this.chests) c.dispose();
     this.chests.length = 0;
-    for (const n of this.nodes) { disposeTree(n.group); this.propGroup.remove(n.group); }
+    for (const n of (this.stations || [])) { disposeTree(n.group); this.propGroup.remove(n.group); }
+    for (const c of (this.carryCores || [])) { disposeTree(c.group); this.propGroup.remove(c.group); }
+    if (this.seqManifest) { disposeTree(this.seqManifest.group); this.propGroup.remove(this.seqManifest.group); this.seqManifest = null; }
+    if (this.circuitLines) { disposeTree(this.circuitLines); this.propGroup.remove(this.circuitLines); this.circuitLines = null; }
+    for (const t of (this.secrets || [])) { disposeTree(t.group); this.propGroup.remove(t.group); }
+    this.secrets = [];
+    this.cacheKeys = 0;
+    this.stations = [];
+    this.carryCores = [];
+    this.carrying = null;
+    this.kind = null;
+    this.timedClock = 0;
+    this.player.carryPenalty = 1;
+    this.hud.setTimer(null);
     this.nodes.length = 0;
     for (const p of this.pickups) { disposeTree(p.group); this.propGroup.remove(p.group); }
     this.pickups.length = 0;
@@ -386,6 +412,9 @@ class Game {
     this.bossRoom = this.level.rooms.find((r) => r.type === 'boss') || this.level.rooms[this.level.rooms.length - 1];
     this._sealBossRoom();
 
+    // The optional layer needs to know where everything else went first.
+    this._setupSecrets(cfg, rng);
+
     this.lift = {
       group: buildLift(cfg.palette.trim),
       pos: this.level.roomCenter(this.bossRoom),
@@ -434,6 +463,7 @@ class Game {
       this.chestLight = new THREE.PointLight(0x9fe4ff, 5.0, 18, 1.2);
       this.chestLight.position.copy(this.chests[0].pos).add(new THREE.Vector3(0, 1.4, 0));
       this.scene.add(this.chestLight);
+      this._playOpening();
       this._queue(STORY.awaken);
     } else {
       this._queue(STORY.floorStart[this.floorIndex] || []);
@@ -480,27 +510,217 @@ class Game {
       type: obj.type, label: obj.label, verb: obj.verb,
       total: obj.count, done: 0,
     };
-    if (obj.type === 'nodes') {
-      const rooms = this.level.rooms.filter((r) => r.type === 'objective');
-      const picks = rooms.length >= obj.count ? rooms
-        : rooms.concat(rng.shuffle(this.level.rooms.filter((r) => r.type !== 'spawn' && r.type !== 'boss' && r.type !== 'objective')));
-      for (let i = 0; i < obj.count; i++) {
-        const room = picks[i % picks.length];
-        if (!room) break;
-        const pos = this.level.randomPointIn(room, rng, 2.5);
-        const group = buildNode(cfg.palette.trim);
-        group.position.copy(pos);
-        this.propGroup.add(group);
-        this.nodes.push({
-          group, pos, room, index: i,
-          state: 'idle',        // idle | charging | defending | done
-          charge: 0, wave: 0, waveEnemies: [], spawnedThisWave: 0,
+    this.floorCfg = cfg;
+    this.kind = objectiveKind(obj.type);
+    this.stations = [];
+    this.kind.setup(this, cfg, rng);
+    // `nodes` is the only kind the rest of the game still reaches into by name.
+    this.nodes = this.objective.type === 'nodes' ? this.stations : [];
+  }
+
+  /**
+   * The optional layer: logs in dead ends, a locked cache whose key is on the
+   * far side of the floor, and one oddity that is only there to be found.
+   *
+   * None of it is on the compass and none of it is required. Being told where
+   * a secret is makes it an errand.
+   */
+  _setupSecrets(cfg, rng) {
+    const level = this.level;
+    const floor = this.floorIndex;
+    // Rank rooms by how far off the critical path they are: a log in the room
+    // you have to cross anyway is not a discovery.
+    const busy = new Set([
+      ...this.stations.map((s) => s.room?.id),
+      ...this.chests.map((c) => level.roomAt(c.pos.x, c.pos.z)?.id),
+      this.bossRoom?.id, level.rooms[0].id,
+    ]);
+    const quiet = rng.shuffle(level.rooms.filter((r) => !busy.has(r.id) && r.type !== 'boss'));
+    const any = quiet.length ? quiet : rng.shuffle(level.rooms.filter((r) => r.type !== 'boss'));
+
+    const spotIn = (room, margin = 2) => {
+      // Prefer a wall, and prefer a wall you have to look for.
+      const spots = level._wallSpots(room);
+      if (spots.length) {
+        const s = spots[rng.int(0, spots.length - 1)];
+        return { pos: new THREE.Vector3(s.x, 0, s.z), ry: s.ry };
+      }
+      return { pos: level.randomPointIn(room, rng, margin), ry: rng() * TAU };
+    };
+
+    // --- lore terminals ---
+    const entries = LORE[floor] || [];
+    entries.forEach((entry, i) => {
+      const room = any[i % any.length];
+      if (!room) return;
+      const { pos, ry } = spotIn(room);
+      const group = buildTerminal(cfg.palette.emissive);
+      group.position.copy(pos);
+      group.rotation.y = ry;
+      this.propGroup.add(group);
+      this.secrets.push({ kind: 'lore', group, pos, entry, used: this.foundLore.has(entry.id) });
+    });
+
+    // --- a locked cache, and its key, as far apart as the floor allows ---
+    if (any.length >= 2) {
+      const cacheRoom = any[any.length - 1];
+      const cs = spotIn(cacheRoom, 2.5);
+      const cache = buildCache(cfg.palette.trim);
+      cache.position.copy(cs.pos);
+      cache.rotation.y = cs.ry;
+      this.propGroup.add(cache);
+      this.secrets.push({ kind: 'cache', group: cache, pos: cs.pos, opened: false });
+
+      // Key goes in whichever remaining room is furthest from the cache.
+      const keyRoom = any.slice(0, -1).reduce((a, b) => {
+        const da = Math.hypot(a.cx - cacheRoom.cx, a.cz - cacheRoom.cz);
+        const db = Math.hypot(b.cx - cacheRoom.cx, b.cz - cacheRoom.cz);
+        return db > da ? b : a;
+      });
+      const ks = spotIn(keyRoom, 2);
+      const key = buildCacheKey(cfg.palette.emissive);
+      key.position.copy(ks.pos);
+      key.position.y = 0.9;
+      this.propGroup.add(key);
+      this.secrets.push({ kind: 'key', group: key, pos: key.position.clone(), taken: false });
+    }
+
+    // --- one easter egg, in the least likely place on the floor ---
+    const egg = EGGS[floor % EGGS.length];
+    const eggRoom = any[Math.max(0, any.length - 2)] || any[0];
+    if (egg && eggRoom) {
+      const es = spotIn(eggRoom, 2);
+      const group = buildEgg(egg.id, cfg.palette.emissive);
+      group.position.copy(es.pos);
+      group.rotation.y = es.ry;
+      this.propGroup.add(group);
+      this.secrets.push({ kind: 'egg', group, pos: es.pos, egg, found: this.foundEggs.has(egg.id) });
+    }
+  }
+
+  _updateSecrets(dt) {
+    for (const s of this.secrets) {
+      if (s.kind === 'key' && !s.taken) {
+        s.group.rotation.y += dt * 1.6;
+        s.group.position.y = 0.9 + Math.sin(this.now * 2.2) * 0.09;
+        s.group.userData.halo.rotation.z += dt * 0.9;
+      } else if (s.kind === 'lore') {
+        const scr = s.group.userData.screen;
+        scr.material.opacity = s.used ? 0.2 : 0.4 + Math.sin(this.now * 2.6) * 0.16;
+      } else if (s.kind === 'cache') {
+        s.group.userData.lamp.material.color.setHex(
+          s.opened ? 0x4affa0 : (this.cacheKeys > 0 ? 0xffd24a : 0xff4a5a));
+      } else if (s.kind === 'egg') {
+        s.group.userData.halo.rotation.z += dt * 0.4;
+        s.group.userData.halo.material.opacity = s.found ? 0.1 : 0.18 + Math.sin(this.now * 1.4) * 0.1;
+      }
+    }
+  }
+
+  /** Interaction targets for the optional layer. */
+  _offerSecrets(consider) {
+    const p = this.player;
+    for (const s of this.secrets) {
+      const d = Math.hypot(s.pos.x - p.pos.x, s.pos.z - p.pos.z);
+      if (s.kind === 'lore') {
+        consider(null, d, s.used ? 'Read it again' : 'Read the terminal', () => this._readLore(s));
+      } else if (s.kind === 'key' && !s.taken) {
+        consider(null, d, 'Take the cache key', () => {
+          s.taken = true;
+          s.group.visible = false;
+          this.cacheKeys++;
+          audio.pickup();
+          this.hud.toast('CACHE KEY — SOMETHING ON THIS FLOOR IS LOCKED', 'good', 3.4);
+        });
+      } else if (s.kind === 'cache' && !s.opened) {
+        consider(null, d, this.cacheKeys > 0 ? 'Unlock the cache' : 'Locked — the key is elsewhere', () => {
+          if (this.cacheKeys <= 0) {
+            audio.deny();
+            this.hud.toast('LOCKED', 'bad', 1.4);
+            return;
+          }
+          this.cacheKeys--;
+          s.opened = true;
+          s.group.userData.lid.rotation.x = -1.1;
+          s.group.userData.lid.position.z = -0.35;
+          audio.levelUp();
+          this._payCache(s);
+        });
+      } else if (s.kind === 'egg' && !s.found) {
+        consider(null, d, `Look closer`, () => {
+          s.found = true;
+          this.foundEggs.add(s.egg.id);
+          audio.levelUp();
+          this._showLore('CURIOSITY', s.egg.name, s.egg.note);
         });
       }
-    } else if (obj.type === 'keycards') {
-      this.keycardsSpawned = 0;
-      this.eliteTimer = 4;
     }
+  }
+
+  /** The archive screen: everything found, and blanks for everything not. */
+  _renderArchive() {
+    const found = this.foundLore;
+    const eggs = this.foundEggs;
+    const rows = ALL_LORE.map((e) => {
+      const has = found.has(e.id);
+      const fl = e.floor === 0 ? 'B1' : `F${e.floor}`;
+      return `<div class="archiveRow${has ? '' : ' locked'}">
+        <div class="fl">${fl}</div>
+        <div class="ti">${has ? e.title : '— NOT RECOVERED —'}</div>
+        ${has ? `<div class="bd">${e.body.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</div>` : ''}
+      </div>`;
+    }).join('');
+    const eggRows = EGGS.map((e) => {
+      const has = eggs.has(e.id);
+      return `<div class="archiveRow${has ? '' : ' locked'}">
+        <div class="fl">ODD</div>
+        <div class="ti">${has ? e.name : '— NOT FOUND —'}</div>
+        ${has ? `<div class="bd">${e.note}</div>` : ''}
+      </div>`;
+    }).join('');
+    $('archiveNote').textContent =
+      `${found.size} of ${ALL_LORE.length} logs recovered · ${eggs.size} of ${EGGS.length} curiosities found. None of it was on the map.`;
+    $('archiveList').innerHTML = rows + eggRows;
+  }
+
+  _readLore(s) {
+    if (!s.used) {
+      s.used = true;
+      this.foundLore.add(s.entry.id);
+      audio.ui(720);
+      this.hud.toast(`ARCHIVE ${this.foundLore.size}/${ALL_LORE.length}`, 'good', 2);
+    }
+    this._showLore('RECOVERED LOG', s.entry.title, s.entry.body);
+  }
+
+  _showLore(kind, title, body) {
+    $('loreKind').textContent = kind;
+    $('loreTitle').textContent = title;
+    $('loreBody').textContent = body;
+    this.showScreen('loreScreen');
+    this.state = 'reading';
+    this.input.releaseLock?.();
+  }
+
+  _closeLore() {
+    this.showScreen(null);
+    this.state = 'playing';
+    this.input.requestLock();
+  }
+
+  /** What a cache is worth: shards, a full heal, and a weapon you did not roll. */
+  _payCache(s) {
+    const cfg = floorConfig(this.floorIndex);
+    const shards = 90 + this.floorIndex * 45;
+    this.player.shards += shards;
+    this.particles.ring(s.pos.x, 0.6, s.pos.z, { from: 0.5, to: 7, life: 0.9, color: cfg.palette.trim });
+    this.hud.toast(`CACHE — ${shards} SHARDS`, 'good', 2.6);
+    this._addPickup('health', new THREE.Vector3(s.pos.x + 0.9, 0, s.pos.z), 60);
+    // A weapon you did not roll for — biased to something you are not holding.
+    const held = this.player.slots.filter(Boolean).map((w) => w.id);
+    const pool = chestPool().filter((id) => !held.includes(id));
+    const id = pool[this.rng.int(0, Math.max(0, pool.length - 1))];
+    if (id) this._dropWeaponPickup(id, new THREE.Vector3(s.pos.x - 1.0, 0, s.pos.z));
   }
 
   _sealBossRoom() {
@@ -604,6 +824,10 @@ class Game {
 
     if (this.state === 'playing') {
       this.update(dt);
+    } else if (this.state === 'reading') {
+      // The world holds still while you read. Only the way out is live.
+      if (this.input.pressed('Escape') || this.input.pressed('KeyE')) this._closeLore();
+      this.hud.update(dt);
     } else if (this.state === 'paused' || this.state === 'dead') {
       this.hud.update(dt);
     }
@@ -620,6 +844,12 @@ class Game {
 
     // --- global keys ---
     if (input.pressed('Escape')) { this.pause(); return; }
+
+    // A cutscene swallows the controls. Any key skips it — a cinematic you
+    // cannot get out of is one the player resents on the second run.
+    if (this.cine?.active) {
+      if (input.anyPressed() || input.mouse.leftPressed) this.cine.skip();
+    }
     if (input.pressed('KeyM')) {
       audio.setVolume(audio.volume > 0 ? 0 : 0.7);
       this.hud.toast(audio.volume > 0 ? 'AUDIO ON' : 'AUDIO MUTED', 'info', 1);
@@ -629,9 +859,11 @@ class Game {
     if (showLoadout) renderLoadoutDetail(player, this.runtime, this.pairing);
 
     // --- look ---
-    if (input.locked) {
+    if (input.locked && !this.cine?.active) {
       const look = input.takeLook();
       player.look(look.yaw, look.pitch);
+    } else if (this.cine?.active) {
+      input.takeLook();
     }
 
     // --- weapon selection ---
@@ -661,11 +893,12 @@ class Game {
     this._updateProjectiles(dt);
     this._updateChests(dt);
     this._updateNodes(dt);
+    this._updateSecrets(dt);
     this._updatePickups(dt);
     this._updateVendors(dt);
     this._updateHoldout(dt);
     this._updateSpawning(dt);
-    this._updateInteraction(dt);
+    if (!this.cine?.active) this._updateInteraction(dt);
     this._updateStory(dt);
     this._updateLights(dt);
 
@@ -676,7 +909,11 @@ class Game {
     if (!player.alive) { this._onPlayerDown(); return; }
 
     // --- viewmodel + camera ---
-    player.applyCamera(this.camera, dt);
+    // A cutscene owns the camera outright while it runs; the player still
+    // simulates underneath it so the world does not freeze mid-shot.
+    if (!(this.cine && this.cine.update(dt, this.camera))) {
+      player.applyCamera(this.camera, dt);
+    }
     this._updateViewmodel(dt);
     this.torch.position.set(this.camera.position.x, this.camera.position.y + 0.2, this.camera.position.z);
 
@@ -772,8 +1009,10 @@ class Game {
       }
       if (tEnter > maxDist) return;
 
-      // Clip the in-cylinder span against the target's vertical extent.
-      const yBottom = t.pos.y, yTop = t.pos.y + t.height;
+      // Clip the in-cylinder span against the target's vertical extent. This
+      // has to come from feetY, not pos.y — flyers hover by offsetting their
+      // mesh, so pos.y is the floor underneath them, not the bottom of them.
+      const yBottom = t.feetY, yTop = t.feetY + t.height;
       let hit = tEnter;
       let y = origin.y + uy * hit;
       if (y < yBottom || y > yTop) {
@@ -809,7 +1048,7 @@ class Game {
 
   /** Is this world point inside the target's head volume? */
   _isHeadHit(target, x, y, z) {
-    const hy = target.headY ? target.headY() : target.pos.y + target.height * 0.85;
+    const hy = target.headY ? target.headY() : (target.feetY ?? target.pos.y) + target.height * 0.85;
     const r = (target.headRadius ?? target.height * 0.13) + 0.1;
     const dx = x - target.pos.x, dz = z - target.pos.z, dy = y - hy;
     return dx * dx + dy * dy + dz * dz <= r * r;
@@ -822,7 +1061,7 @@ class Game {
       const dx = t.pos.x - origin.x, dz = t.pos.z - origin.z;
       const d = Math.hypot(dx, dz);
       if (d > range + t.radius) return;
-      const dy = (t.pos.y + t.height * 0.5) - (origin.y + 1.2);
+      const dy = (t.feetY + t.height * 0.5) - (origin.y + 1.2);
       if (Math.abs(dy) > t.height * 0.9 + 0.8) return;
       if (d > 0.001) {
         const cos = (dx * dir.x + dz * dir.z) / d;
@@ -856,7 +1095,9 @@ class Game {
   _splash(x, y, z, radius, damage, w, e) {
     for (const t of this.enemies) {
       if (!t.alive) continue;
-      const d = Math.hypot(t.pos.x - x, t.pos.z - z);
+      // Measured in 3D, so height counts: a blast on the floor reaches a
+      // hovering drone only if the drone is actually within the radius.
+      const d = Math.hypot(t.pos.x - x, t.feetY + t.height * 0.5 - y, t.pos.z - z);
       if (d > radius) continue;
       const res = t.takeDamage(damage * (1 - d / radius / 1.6), {});
       this._onTargetDamaged(t, res, w, e, {});
@@ -960,10 +1201,7 @@ class Game {
     else if (roll < 0.24) this._addPickup('ammo', enemy.pos, 0);
 
     // Wave / objective bookkeeping
-    for (const n of this.nodes) {
-      const i = n.waveEnemies.indexOf(enemy);
-      if (i >= 0) swapRemove(n.waveEnemies, i);
-    }
+    if (this.kind?.onKill) this.kind.onKill(this, enemy);
     if (this.holdout) {
       const i = this.holdout.enemies.indexOf(enemy);
       if (i >= 0) swapRemove(this.holdout.enemies, i);
@@ -1204,9 +1442,102 @@ class Game {
     audio.stopMusic(0.4);
     setTimeout(() => audio.startMusic({ ...this.boss.def.music, pad: false }), 500);
     audio.bossRoar(1);
-    this.hud.banner(this.boss.def.name, this.boss.def.title, 4.4);
     this.particles.ring(pos.x, 0.1, pos.z, { from: 1, to: 16, life: 0.9, color: this.boss.def.build.accent });
-    this._queue(this.boss.def.lines.intro.map((t) => ({ speaker: 'BOSS', text: t, hold: Math.max(3, t.length * 0.045) })), true);
+    this._playBossIntro();
+  }
+
+  /**
+   * The boss reveal. Three shots: the door sealing behind you, an arc around
+   * whatever is waiting, and a settle back to eye level as it starts talking.
+   * The boss's own intro lines carry the shots, so a boss with three lines
+   * gets three beats and a boss with one gets one.
+   */
+  _playBossIntro() {
+    const boss = this.boss;
+    const def = boss.def;
+    const at = () => boss.pos;
+    const lines = def.lines.intro || [];
+    const speak = (i) => (lines[i] ? [def.name, lines[i]] : null);
+
+    const shots = [
+      // Look back at the door you just came through, as it closes.
+      shot.hold(
+        () => [this.player.pos.x, this.player.pos.y + 1.7, this.player.pos.z],
+        () => [this.player.pos.x * 2 - boss.pos.x, 2.2, this.player.pos.z * 2 - boss.pos.z],
+        { time: 1.5, line: null },
+      ),
+      shot.orbit(at, {
+        radius: def.build.scale ? 7 + def.build.scale * 2 : 8,
+        height: 4.5, from: -0.6, to: 1.1,
+        time: Math.max(2.6, (lines[0] || '').length * 0.05), line: speak(0), hold: 0.4, shake: 0.02,
+      }),
+    ];
+    if (lines[1]) {
+      shots.push(shot.push(at, {
+        dist: 9, height: 2.4, close: 4.5,
+        time: Math.max(2.4, lines[1].length * 0.048), line: speak(1), hold: 0.3,
+      }));
+    }
+    if (lines[2]) {
+      shots.push(shot.orbit(at, {
+        radius: 6.5, height: 2.2, from: 2.4, to: 3.6,
+        time: Math.max(2.2, lines[2].length * 0.046), line: speak(2), hold: 0.3,
+      }));
+    }
+    // Settle: drift back to where the player is actually standing.
+    shots.push({
+      from: () => [boss.pos.x, boss.pos.y + 2.4, boss.pos.z + 6],
+      to: () => [this.player.pos.x, this.player.pos.y + 1.7, this.player.pos.z],
+      look: () => [boss.pos.x, boss.pos.y + 1.4, boss.pos.z],
+      time: 1.1,
+    });
+
+    this.hud.setCinematic(true);
+    this.cine.play(shots, {
+      onDone: () => {
+        this.hud.setCinematic(false);
+        this.hud.banner(def.name, def.title, 3.2);
+        audio.bossRoar(1.2);
+      },
+    });
+  }
+
+  /**
+   * The cold open, as a shot rather than a fade-up: the camera finds Michael
+   * in the dark, drifts to the one lit thing in the room, and hands control
+   * back with the chest already in frame.
+   */
+  _playOpening() {
+    const chest = this.chests[0];
+    if (!chest || !this.cine) return;
+    const c = chest.pos;
+    this.cine.play([
+      shot.hold(
+        () => [c.x + 5, 3.6, c.z + 6],
+        () => [c.x, 1.0, c.z],
+        { time: 3.4, line: ['', 'Sublevel B1. Cold Storage.'] },
+      ),
+      {
+        from: () => [c.x + 5, 3.6, c.z + 6],
+        to: () => [c.x + 1.4, 1.5, c.z + 3.2],
+        look: () => [c.x, 0.9, c.z],
+        time: 3.6,
+        line: ['MICHAEL SANDLOR', 'Hello?'],
+        hold: 0.6,
+      },
+      {
+        from: () => [c.x + 1.4, 1.5, c.z + 3.2],
+        to: () => [this.player.pos.x, this.player.pos.y + 1.7, this.player.pos.z],
+        look: () => [c.x, 1.0, c.z],
+        time: 1.4,
+      },
+    ], {
+      onDone: () => {
+        this.hud.setCinematic(false);
+        this.hud.toast('E — OPEN THE CHEST', 'info', 4);
+      },
+    });
+    this.hud.setCinematic(true);
   }
 
   _reseal() {
@@ -1288,7 +1619,7 @@ class Game {
           if (!t || !t.alive) return;
           if (p.hitList && p.hitList.has(t.id)) return;
           const dx = p.x - t.pos.x, dz = p.z - t.pos.z;
-          const dy = p.y - (t.pos.y + t.height * 0.5);
+          const dy = p.y - (t.feetY + t.height * 0.5);
           const rr = (p.radius + t.radius) ** 2;
           if (dx * dx + dz * dz > rr) return;
           if (Math.abs(dy) > t.height * 0.7) return;
@@ -1406,57 +1737,8 @@ class Game {
   }
 
   _updateNodes(dt) {
-    const cfg = floorConfig(this.floorIndex);
-    for (const n of this.nodes) {
-      const core = n.group.userData.core;
-      const ring = n.group.userData.ring;
-      core.rotation.y += dt * 1.4;
-      core.rotation.x += dt * 0.7;
-      ring.rotation.z += dt * 0.8;
-      ring.scale.setScalar(2.2 + Math.sin(this.now * 2 + n.index) * 0.2);
-
-      if (n.state === 'done') {
-        core.material.color.setHex(0x4affa0);
-        core.scale.setScalar(0.7);
-        continue;
-      }
-      if (n.state === 'charging') {
-        core.material.color.setHex(0xffd24a);
-        core.scale.setScalar(1.1 + n.charge * 0.5);
-      }
-      if (n.state === 'defending') {
-        core.material.color.setHex(0xff4a5a);
-        core.scale.setScalar(1.1 + Math.sin(this.now * 9) * 0.14);
-
-        // Feed the wave.
-        if (n.waveEnemies.length === 0 && n.spawnedThisWave >= this._waveSize(cfg)) {
-          n.wave++;
-          n.spawnedThisWave = 0;
-          if (n.wave >= cfg.waveCount) {
-            n.state = 'done';
-            this.objective.done++;
-            this.particles.ring(n.pos.x, 0.1, n.pos.z, { from: 1, to: 10, life: 0.8, color: 0x4affa0 });
-            audio.levelUp();
-            this.hud.toast(`${this.objective.label} ${this.objective.done}/${this.objective.total}`, 'good', 2.4);
-            this._checkObjective();
-            continue;
-          }
-          this.hud.toast(`WAVE ${n.wave + 1} / ${cfg.waveCount}`, 'bad', 2);
-          audio.bossRoar(2);
-        }
-        if (n.spawnedThisWave < this._waveSize(cfg) && this.enemies.length < MAX_ENEMIES) {
-          n.spawnTimer = (n.spawnTimer || 0) - dt;
-          if (n.spawnTimer <= 0) {
-            n.spawnTimer = 0.55;
-            const p = this._spawnPointNear(n.pos, 8, 34) || this._spawnPointNear(this.player.pos, 10, 40);
-            if (p) {
-              const e = this._spawnEnemy(this._pickEnemyType(cfg), p);
-              if (e) { n.waveEnemies.push(e); n.spawnedThisWave++; }
-            }
-          }
-        }
-      }
-    }
+    if (!this.kind) return;
+    this.kind.update(this, dt);
   }
 
   _waveSize(cfg) {
@@ -1646,11 +1928,10 @@ class Game {
       const d = Math.hypot(c.pos.x - p.pos.x, c.pos.z - p.pos.z);
       consider(c, d, c.prompt(), () => this._interactChest(c));
     }
-    for (const n of this.nodes) {
-      if (n.state === 'done' || n.state === 'defending') continue;
-      const d = Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z);
-      consider(n, d, n.state === 'charging' ? 'Hold to engage…' : `Engage ${this.objective.label.toLowerCase()}`, () => this._startNode(n));
+    if (this.kind && !this.objectiveDone) {
+      this.kind.offer(this, (d, text, action) => consider(null, d, text, action));
     }
+    this._offerSecrets(consider);
     for (const v of this.vendors) {
       const d = Math.hypot(v.pos.x - p.pos.x, v.pos.z - p.pos.z);
       consider(v, d, `${v.kind.label} — ${v.kind.cost} shards`, () => this._useVendor(v));
@@ -1663,20 +1944,6 @@ class Game {
     if (this.lift?.active) {
       const d = Math.hypot(this.lift.pos.x - p.pos.x, this.lift.pos.z - p.pos.z);
       consider(this.lift, d, this.floorIndex >= FLOOR_COUNT - 1 ? 'Leave the Pod' : `Ascend to floor ${this.floorIndex + 1}`, () => this._useLift());
-    }
-
-    // Node hold-to-charge: 1.4 seconds of holding E while standing at it.
-    for (const n of this.nodes) {
-      if (n.state !== 'charging') continue;
-      const d = Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z);
-      if (d < 3.4 && this.input.down('KeyE')) {
-        n.charge = Math.min(1, n.charge + dt / 1.4);
-        if (Math.random() < dt * 18) audio.ui(400 + n.charge * 500);
-        if (n.charge >= 1) this._nodeEngaged(n);
-      } else {
-        n.charge = Math.max(0, n.charge - dt * 1.6);
-        if (n.charge <= 0) n.state = 'idle';
-      }
     }
 
     if (best) prompt = best.text;
@@ -1716,25 +1983,11 @@ class Game {
     this._populate(cfg, this.rng, 7);
   }
 
-  _startNode(n) {
-    if (n.state !== 'idle') return;
-    n.state = 'charging';
-    n.charge = 0;
-    audio.ui(500);
-  }
-
-  _nodeEngaged(n) {
-    n.state = 'defending';
-    n.wave = 0;
-    n.spawnedThisWave = 0;
-    n.waveEnemies = [];
-    n.spawnTimer = 0;
-    const cfg = floorConfig(this.floorIndex);
-    audio.bossRoar(1.6);
-    this.particles.ring(n.pos.x, 0.1, n.pos.z, { from: 1, to: 12, life: 0.8, color: 0xff4a5a });
-    this.hud.banner('DEFEND THE PANEL', `${cfg.waveCount} WAVES`, 3);
-    audio.setMusicIntensity(1);
-    this.hud.toast('WAVE 1 / ' + cfg.waveCount, 'bad', 2);
+  /** Complete the floor's objective outright. Used by the test harness. */
+  forceObjective() {
+    if (this.kind?.force) this.kind.force(this);
+    else { this.objective.done = this.objective.total; }
+    this._checkObjective();
   }
 
   _useVendor(v) {
@@ -1913,6 +2166,35 @@ class Game {
     }
     if (!weapon) return;
     this.vmModel = buildWeaponModel(weapon.id, weapon);
+
+    // Auto-frame. The models now range from a 6cm knife to a six-barrel rotary,
+    // and every one of them has its origin at the grip rather than at its
+    // centre, so a single hand-tuned holder transform cannot hold them all.
+    // Normalise each model to a standard on-screen size and centre it here,
+    // and the holder only has to worry about where the hands go.
+    const box = new THREE.Box3().setFromObject(this.vmModel);
+    const size = box.getSize(this._tmpA);
+    const centre = box.getCenter(this._tmpB);
+
+    // Scale on visual bulk, not on length. Normalising by the longest axis
+    // alone treats a rifle and a six-barrel rotary as the same size because
+    // both are about 1.7 long — and the rotary is three times as thick, so it
+    // ended up filling the screen. Cross-section dominates what the frame
+    // actually costs, so it dominates here too.
+    const bulk = Math.max(size.x, size.y) * 2.8 + size.z * 0.32;
+    const k = (weapon.kind === 'melee' ? 1.55 : 1.35) / Math.max(0.001, bulk);
+    this.vmModel.scale.setScalar(k);
+
+    // Centre laterally, but anchor along the barrel near the grip rather than
+    // at the centroid: the hands stay put and long weapons extend away from
+    // the camera instead of reaching back past it.
+    this.vmModel.position.set(
+      -centre.x * k,
+      -centre.y * k,
+      -(box.min.z + size.z * 0.46) * k,
+    );
+    this.vmModel.userData.frameScale = k;
+
     this.vmHolder.add(this.vmModel);
     this.vmSwapT = 0;
   }
@@ -1932,10 +2214,12 @@ class Game {
     const heavy = w?.tags?.includes('heavy');
 
     // Base rest pose, then additive motion.
-    const baseX = heavy ? 0.17 : melee ? 0.17 : 0.2;
-    const baseY = melee ? -0.15 : -0.12;
-    const baseZ = heavy ? -0.68 : -0.5;
-    this.vmHolder.scale.setScalar(melee ? 0.32 : 0.38);
+    // The models are pre-normalised in _setViewmodel, so these are purely
+    // about where the hands sit, not about how big any particular gun is.
+    const baseX = melee ? 0.22 : 0.24;
+    const baseY = melee ? -0.27 : -0.3;
+    const baseZ = melee ? -0.62 : -0.68;
+    this.vmHolder.scale.setScalar(0.6);
 
     const swapDip = (1 - this.vmSwapT) * 0.5;
     const swingAmt = this.vmSwing * this.vmSwing;
@@ -1947,7 +2231,11 @@ class Game {
     );
     this.vmHolder.rotation.set(
       -p.pitch * 0.06 + this.vmKick * 0.34 + swingAmt * 1.5 - swapDip * 1.1,
-      Math.PI + (melee ? -0.18 : -0.05) - swingAmt * 0.5,
+      // Canted so the muzzle angles in toward the centre of the screen and the
+      // gun is seen from its side. Dead-on you are looking at a breech: the
+      // Behemoth's six barrels, the AK's gas tube and every rail on every
+      // weapon only read in profile, which is why every shooter does this.
+      Math.PI + (melee ? 0.26 : 0.22) - swingAmt * 0.5,
       0.02 + sway * 1.2 + swingAmt * 0.5,
     );
 
@@ -2235,13 +2523,37 @@ class Game {
     else if (this.objectiveDone) { target = this.level.roomCenter(this.bossRoom); label = 'SEALED ROOM'; }
     else {
       let bestD = Infinity;
-      if (this.objective.type === 'nodes') {
-        for (const n of this.nodes) {
-          if (n.state === 'done') continue;
+      if (this.objective.type === 'carry' && !this.carrying) {
+        for (const c of (this.carryCores || [])) {
+          if (c.taken) continue;
+          const d = Math.hypot(c.group.position.x - p.pos.x, c.group.position.z - p.pos.z);
+          if (d < bestD) { bestD = d; target = c.group.position; label = 'PUMP CORE'; }
+        }
+      } else if (this.objective.type === 'sequence' && !this.seqKnown) {
+        target = this.seqManifest.pos; label = 'MANIFEST';
+      } else if (this.objective.type === 'hunt') {
+        // Deliberately no marker: finding them is the objective. Point at the
+        // room instead of the valve, so you are given a direction, not a pin.
+        for (const st of this.stations) {
+          if (st.state === 'done') continue;
+          const c = this.level.roomCenter(st.room);
+          const d = Math.hypot(c.x - p.pos.x, c.z - p.pos.z);
+          if (d < bestD) { bestD = d; target = c; label = 'RACK BANK'; }
+        }
+      } else if (this.stations && this.stations.length) {
+        for (const n of this.stations) {
+          if (n.state === 'done' || n.on) continue;
           const d = Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z);
           if (d < bestD) { bestD = d; target = n.pos; label = this.objective.label; }
         }
-      } else {
+        if (!target && this.objective.type === 'circuit') {
+          for (const n of this.stations) {
+            const d = Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z);
+            if (d < bestD) { bestD = d; target = n.pos; label = this.objective.label; }
+          }
+        }
+      }
+      if (!target) {
         for (const e of this.enemies) {
           if (!e.carriesKeycard) continue;
           const d = Math.hypot(e.pos.x - p.pos.x, e.pos.z - p.pos.z);
@@ -2302,8 +2614,22 @@ class Game {
     if (this.objectiveDone && !this.bossDefeated && this.bossSealed) this._unsealBossRoom();
     this.projectiles.clear();
     this.particles.clear();
-    for (const n of this.nodes) {
+    for (const n of (this.stations || [])) {
       if (n.state === 'defending' || n.state === 'charging') { n.state = 'idle'; n.charge = 0; n.waveEnemies = []; }
+    }
+    // A wipe drops whatever you were carrying back at the store.
+    if (this.carrying) {
+      this.carrying.group.position.copy(this.carrying.pos);
+      this.carrying = null;
+      this.player.carryPenalty = 1;
+    }
+    // …and stops the Kiln's clock, which is otherwise unwinnable after a death.
+    if (this.timedClock > 0) {
+      this.timedClock = 0;
+      this.hud.setTimer(null);
+      for (const n of (this.stations || [])) if (n.state === 'open') n.state = 'idle';
+      this.timedOpen = 0;
+      this.objective.done = 0;
     }
     if (this.holdout) this.holdout = { time: 92, enemies: [], spawnTimer: 0, started: false };
 
@@ -2367,7 +2693,9 @@ class Game {
       this.renderer.setRenderTarget(target);
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
-      if (this.state === 'playing' || this.state === 'paused') {
+      const firstPerson = (this.state === 'playing' || this.state === 'paused')
+        && !this.cine?.active;
+      if (firstPerson) {
         this.renderer.clearDepth();
         this.renderer.render(this.vmScene, this.vmCamera);
       }
@@ -2382,7 +2710,7 @@ class Game {
  * (0 is never a real hit here — the muzzle is always outside the head).
  */
 function rayHitsHead(origin, ux, uy, uz, target, maxDist) {
-  const hy = target.headY ? target.headY() : target.pos.y + target.height * 0.85;
+  const hy = target.headY ? target.headY() : (target.feetY ?? target.pos.y) + target.height * 0.85;
   const r = (target.headRadius ?? target.height * 0.13) + 0.08;
   const ex = origin.x - target.pos.x;
   const ey = origin.y - hy;

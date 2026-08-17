@@ -30,6 +30,9 @@ await page.waitForTimeout(400);
 
 await page.evaluate(async (id) => {
   const g = window.game;
+    // Probes want the game, not the film.
+    g.cine?.cancel();
+    g.hud.setCinematic(false);
   const W = await import('/src/combat/weapons.js');
   g.hud.hide();
   g.level.group.visible = false;

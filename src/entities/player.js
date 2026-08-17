@@ -37,6 +37,7 @@ export class Player {
     this.speedMul = 1;            // synergy / status effects
     this.slowUntil = 0;
     this.slowFactor = 1;
+    this.carryPenalty = 1;   // < 1 while both hands are holding something
 
     this.lastDamageTime = -999;
     this.regenDelay = 5.5;
@@ -157,7 +158,7 @@ export class Player {
     this.sprinting = wantSprint && axis.y > 0.2 && this.dodgeTime <= 0;
 
     const weaponMove = this.weapon?.effectiveMoveMul ?? 1;
-    let speed = this.baseSpeed * this.speedMul * weaponMove * this.slowFactor;
+    let speed = this.baseSpeed * this.speedMul * weaponMove * this.slowFactor * (this.carryPenalty ?? 1);
     if (this.sprinting) speed *= this.sprintMul;
 
     const f = this.flatForward(_f);

@@ -146,8 +146,20 @@ export class Enemy {
     this._origColors = null;
   }
 
+  /**
+   * Bottom of the body volume in world space.
+   *
+   * For a walker this is `pos.y`. For a flyer it is not: hovering is done by
+   * offsetting the *mesh* by `baseY` while `pos.y` stays on the floor, so any
+   * hit test that reads `pos.y` directly builds its volume at ground level
+   * while the drone is two metres up. That is exactly why Watcher Drones could
+   * only ever be killed by a headshot — the head volume was the one place that
+   * remembered to add `baseY`.
+   */
+  get feetY() { return this.pos.y + this.baseY; }
+
   get center() {
-    return _c.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
+    return _c.set(this.pos.x, this.feetY + this.height * 0.55, this.pos.z);
   }
 
   /** World-space centre of the head — used for hit tests and damage numbers. */

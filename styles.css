@@ -577,3 +577,96 @@ ul.rules b { color: var(--ink); font-weight: 400; }
   #vitals { width: 210px; }
   #intercom { bottom: 136px; }
 }
+
+/* A countdown that is about to run out should be impossible to miss. */
+#objText.urgent {
+  color: #ff6a5a;
+  animation: urgentPulse 0.55s steps(2, end) infinite;
+}
+@keyframes urgentPulse { 50% { opacity: 0.45; } }
+
+/* ---- cinematics ------------------------------------------------------- */
+/* Letterbox, a speaker plate, and a skip hint. The bars slide rather than
+   appear, because a hard cut to 2.39:1 reads as a bug. */
+#cinematic {
+  position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+#cinematic.hidden { display: none; }
+#cinematic .barTop, #cinematic .barBottom {
+  position: absolute; left: 0; right: 0; height: 12vh;
+  background: #05070a;
+  animation: cineBar 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+#cinematic .barTop { top: 0; }
+#cinematic .barBottom { bottom: 0; }
+@keyframes cineBar { from { height: 0; } }
+
+#cineText {
+  position: absolute; left: 0; right: 0; bottom: 14vh;
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  padding: 0 12vw; text-align: center;
+}
+#cineWho {
+  font-size: 0.74rem; letter-spacing: 0.34em; color: var(--accent, #6fd8ff);
+  text-transform: uppercase;
+}
+#cineWho:empty { display: none; }
+#cineLine {
+  font-size: 1.12rem; line-height: 1.55; color: #eef4fb;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9);
+  max-width: 46rem;
+}
+#cineLine:empty { display: none; }
+#cineSkip {
+  position: absolute; right: 2.2rem; bottom: 5vh;
+  font-size: 0.62rem; letter-spacing: 0.28em; color: rgba(220, 232, 246, 0.42);
+  animation: skipFade 2.4s ease-in-out infinite;
+}
+@keyframes skipFade { 50% { opacity: 0.35; } }
+
+/* ---- lore + archive --------------------------------------------------- */
+#loreCard {
+  max-width: 46rem; width: min(46rem, 88vw);
+  background: linear-gradient(180deg, rgba(16, 22, 30, 0.97), rgba(10, 14, 20, 0.97));
+  border: 1px solid rgba(120, 160, 200, 0.22);
+  border-left: 3px solid var(--accent, #6fd8ff);
+  padding: 1.8rem 2rem 1.4rem;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+}
+#loreKind {
+  font-size: 0.62rem; letter-spacing: 0.34em; color: var(--accent, #6fd8ff);
+  margin-bottom: 0.6rem;
+}
+#loreCard h2 { margin: 0 0 1rem; font-size: 1.15rem; letter-spacing: 0.1em; }
+#loreBody {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.9rem; line-height: 1.7; white-space: pre-wrap;
+  color: #c8d6e4; margin: 0 0 1.2rem;
+  max-height: 52vh; overflow-y: auto;
+}
+
+#archiveNote { opacity: 0.6; font-size: 0.8rem; margin-bottom: 1.2rem; }
+#archiveList {
+  display: grid; gap: 0.6rem; width: min(60rem, 92vw);
+  max-height: 62vh; overflow-y: auto; padding-right: 0.5rem;
+}
+.archiveRow {
+  display: grid; grid-template-columns: 4.5rem 1fr; gap: 1rem; align-items: baseline;
+  padding: 0.7rem 0.9rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid rgba(120, 160, 200, 0.28);
+}
+.archiveRow.locked { opacity: 0.32; border-left-color: rgba(120, 160, 200, 0.1); }
+.archiveRow .fl { font-size: 0.62rem; letter-spacing: 0.2em; opacity: 0.65; }
+.archiveRow .ti { font-size: 0.86rem; }
+.archiveRow .bd {
+  grid-column: 2; font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.76rem; line-height: 1.65; color: #a8bccd;
+  white-space: pre-wrap; margin-top: 0.5rem;
+}
+
+/* The HUD fades out under a cinematic — an ammo counter in the corner of a
+   framed shot is the fastest way to make it stop being one. */
+#hud.cinematic { opacity: 0; transition: opacity 0.45s ease; pointer-events: none; }
+#hud { transition: opacity 0.35s ease; }

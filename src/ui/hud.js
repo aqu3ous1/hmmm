@@ -63,8 +63,11 @@ export class HUD {
   }
 
   setObjective(text, progress) {
+    this._objectiveText = text;
+    this._objectiveFrac = clamp(progress, 0, 1);
+    if (this._timer) return;          // a countdown owns the panel while it runs
     this.el.objText.textContent = text;
-    this.el.objBar.style.width = `${clamp(progress, 0, 1) * 100}%`;
+    this.el.objBar.style.width = `${this._objectiveFrac * 100}%`;
   }
 
   setWave(text) {
@@ -164,6 +167,34 @@ export class HUD {
         <div class="n">${s.kind === 'desynergy' ? '⚠ ' : '✦ '}${s.name}</div>
         <div class="d">${s.detail}</div>
       </div>`).join('');
+  }
+
+  /** Duck the whole HUD for a cinematic — a shot with an ammo counter in the
+   *  corner is not a shot. */
+  setCinematic(on) {
+    const root = document.getElementById('hud');
+    if (root) root.classList.toggle('cinematic', !!on);
+  }
+
+  /**
+   * A countdown, for objectives that run against a clock. `frac` drives the
+   * bar; passing null clears it and hands the panel back to the objective.
+   */
+  setTimer(text, frac = 0) {
+    const el = this.el.objText;
+    if (!el) return;
+    if (text === null || text === undefined) {
+      this._timer = null;
+      if (this._objectiveText !== undefined) el.textContent = this._objectiveText;
+      this.el.objBar.style.width = `${(this._objectiveFrac || 0) * 100}%`;
+      el.classList.remove('urgent');
+      return;
+    }
+    if (this._timer === null || this._timer === undefined) this._objectiveText = el.textContent;
+    this._timer = text;
+    el.textContent = text;
+    el.classList.toggle('urgent', frac < 0.28);
+    this.el.objBar.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
   }
 
   setInteract(text) {

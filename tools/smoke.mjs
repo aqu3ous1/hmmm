@@ -282,7 +282,73 @@ try {
   }
   if (headTest.every((r) => r.head / Math.max(1, r.body) >= 1.5)) console.log('✓ headshots deal bonus damage');
 
+  // --- Flying enemies must be hittable in the body, not just the head. ---
+  // Flyers hover by offsetting their mesh while pos.y stays on the floor, so
+  // any hit volume built from pos.y sits at ground level under a drone that is
+  // two metres up. That shipped once: drones could only be killed by headshots.
+  const flyTest = await page.evaluate(async () => {
+    const g = window.game;
+    const THREE = await import('/vendor/three.module.js');
+    const W = await import('/src/combat/weapons.js');
+    const rows = [];
+
+    for (const id of ['drone', 'sentry', 'shambler']) {
+      for (let i = g.enemies.length - 1; i >= 0; i--) { g.enemies[i].dispose(); g.enemies.splice(i, 1); }
+      g.projectiles.clear();
+      const room = g.level.rooms.reduce((a, b) => (a.w * a.h > b.w * b.h ? a : b));
+      const c = g.level.roomCenter(room);
+      g.player.pos.set(c.x, 0, c.z + 6);
+      g.player.yaw = 0;
+      g.player.health = g.player.maxHealth = 100000;
+      g.player.slots[0] = W.makeWeapon('ak47');
+      g.player.slots[1] = null;
+      g.player.activeSlot = 0;
+      g._refreshPairing();
+
+      const t = g._spawnEnemy(id, new THREE.Vector3(c.x, 0, c.z));
+      if (!t) { rows.push({ id, body: 0, note: 'spawn failed' }); continue; }
+      t.maxHp = t.hp = 500000;
+      t.speed = 0;
+
+      // Aim at the middle of the body volume — explicitly NOT the head.
+      const bodyY = t.feetY + t.height * 0.45;
+      const dist = 6;
+      const before = g.player.stats.damageDealt;
+      g.input.locked = true;
+      for (let i = 0; i < 180; i++) {
+        t.vel.set(0, 0, 0);
+        t.pos.set(c.x, 0, c.z);
+        t.hp = 500000;
+        g.input.mouse.left = true;
+        g.input.mouse.leftPressed = i % 9 === 0;
+        g.player.pitch = Math.atan2(bodyY - g.player.eyeY(), dist);
+        g.now += 1 / 60;
+        g.update(1 / 60);
+        g.input.endFrame();
+      }
+      g.input.mouse.left = false;
+      rows.push({ id, flying: !!t.type.flying, body: +(g.player.stats.damageDealt - before).toFixed(0) });
+    }
+
+    for (let i = g.enemies.length - 1; i >= 0; i--) { g.enemies[i].dispose(); g.enemies.splice(i, 1); }
+    g.player.slots[0] = null; g.player.slots[1] = null;
+    g.player.maxHealth = 100; g.player.health = 100;
+    g.player.stats.kills = 0; g.player.stats.damageDealt = 0;
+    g._refreshPairing();
+    g.player.pos.copy(g.level.roomCenter(g.level.rooms[0]));
+    g.player.pitch = 0;
+    return rows;
+  });
+  for (const r of flyTest) {
+    console.log(`   ${r.id}${r.flying ? ' (flying)' : ''}: body shots dealt ${r.body}`);
+    if (!(r.body > 0)) errors.push(`${r.id} takes no body damage — its hit volume is not where its model is`);
+  }
+  if (flyTest.every((r) => r.body > 0)) console.log('✓ flying and static enemies take body damage');
+
   // --- Floor 0: open the prologue chest via the real interaction path. ---
+  // The opening cutscene owns the camera and swallows input; skip it the way a
+  // player would rather than tiptoeing around it.
+  await page.evaluate(() => window.game.cine?.skip());
   await play(1.5, { fire: false, aim: false });
   await page.evaluate(() => {
     const g = window.game;
@@ -317,6 +383,7 @@ try {
     // Force-complete the objective, then walk into the boss room.
     await page.evaluate(() => {
       const g = window.game;
+      g.forceObjective();
       for (const n of g.nodes) n.state = 'done';
       g.objective.done = g.objective.total;
       g._checkObjective();

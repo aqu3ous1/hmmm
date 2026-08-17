@@ -42,7 +42,7 @@ const report = await page.evaluate(async ({ bosses, angle }) => {
   let items;
   if (bosses) {
     const B = await import('/src/entities/bossTypes.js');
-    items = B.BOSS_ORDER.map((id) => ({ id, def: B.BOSS_TYPES[id], name: B.BOSS_TYPES[id].name }));
+    items = B.BOSS_ORDER.filter(Boolean).map((id) => ({ id, def: B.BOSSES[id], name: B.BOSSES[id].name }));
   } else {
     const E = await import('/src/entities/enemyTypes.js');
     items = Object.values(E.ENEMY_TYPES).map((t) => ({ id: t.id, type: t, name: t.name }));

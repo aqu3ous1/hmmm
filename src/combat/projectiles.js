@@ -19,8 +19,11 @@ export class ProjectileSystem {
     for (let i = 0; i < MAX; i++) this.pool.push(this._blank());
     this.active = 0;
 
+    // Six radial segments made a bolt read as a flat hexagon whenever one
+    // passed close to the camera, which on a floor full of ranged enemies is
+    // constantly. Ten is still cheap and actually looks round.
     const geo = new THREE.CapsuleGeometry
-      ? new THREE.CapsuleGeometry(0.5, 1.0, 3, 6)
+      ? new THREE.CapsuleGeometry(0.5, 1.0, 4, 10)
       : UNIT.lowSphere.clone();
     this.mesh = new THREE.InstancedMesh(
       geo,
@@ -89,7 +92,7 @@ export class ProjectileSystem {
       if (p.homing && !p.hostile) {
         const t = hooks.findHomingTarget?.(p);
         if (t) {
-          _dir.set(t.pos.x - p.x, (t.pos.y + t.height * 0.5) - p.y, t.pos.z - p.z).normalize();
+          _dir.set(t.pos.x - p.x, (t.feetY + t.height * 0.5) - p.y, t.pos.z - p.z).normalize();
           const sp = Math.hypot(p.vx, p.vy, p.vz);
           p.vx += _dir.x * p.homing * sp * dt * 3;
           p.vy += _dir.y * p.homing * sp * dt * 3;
@@ -188,8 +191,11 @@ export class ProjectileSystem {
         const spinQ = new THREE.Quaternion().setFromAxisAngle(_up, time * p.spin + p.seed);
         _q.multiply(spinQ);
       }
-      const stretch = Math.min(2.6, 0.5 + speed * 0.022);
-      _s.set(p.size * 2, p.size * stretch, p.size * 2);
+      // Stretched hard along travel so it reads as a bolt in flight rather
+      // than a ball, and kept slim across so a near miss is a streak past your
+      // ear instead of a coloured blob filling a third of the screen.
+      const stretch = Math.min(5.5, 1.1 + speed * 0.055);
+      _s.set(p.size * 1.15, p.size * stretch, p.size * 1.15);
       _m.compose(_p, _q, _s);
       this.mesh.setMatrixAt(i, _m);
       this.mesh.setColorAt(i, this._color.setHex(p.color));

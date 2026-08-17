@@ -47,6 +47,9 @@ async function stage(floor, weapon) {
     }
     // Skip the cold-open dim; otherwise leave lighting exactly as the game set it.
     g.prologueActive = false;
+    // Probes want the game, not the film.
+    g.cine?.cancel();
+    g.hud.setCinematic(false);
     g._lightRamp = null;
     const cfg = (await import('/src/world/floors.js')).floorConfig(floor);
 

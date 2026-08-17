@@ -62,6 +62,10 @@ export class Boss {
     this._resetPhaseCooldowns();
   }
 
+  /** Bosses stand on the floor, but every hit test asks for this, so it exists
+   *  here too rather than being special-cased at each call site. */
+  get feetY() { return this.pos.y; }
+
   get center() { return _v.set(this.pos.x, this.pos.y + this.height * 0.5, this.pos.z); }
   headY() { return this.pos.y + this.height * 0.85; }
   get activeMesh() { return this.tagTeam && this.activeTwin === 1 ? this.meshB : this.mesh; }

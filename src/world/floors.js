@@ -41,7 +41,7 @@ export const FLOORS = [
       { id: 'bloater', weight: 2 },
       { id: 'husk', weight: 1 },
     ],
-    objective: { type: 'nodes', count: 3, label: 'SORTING ARMS', verb: 'Jam three sorting arms to clear the stair' },
+    objective: { type: 'sequence', count: 4, label: 'SORTING ARMS', verb: 'Read the manifest, then jam the arms in order' },
     waveSize: [5, 8], waveCount: 3,
   },
   {
@@ -61,7 +61,7 @@ export const FLOORS = [
       { id: 'sentry', weight: 2 },
       { id: 'shambler', weight: 2 },
     ],
-    objective: { type: 'nodes', count: 3, label: 'COOLING VALVES', verb: 'Vent the rack heat to release the stair lock' },
+    objective: { type: 'hunt', count: 4, label: 'COOLING VALVES', verb: 'Find four unmarked cooling valves in the racks' },
     waveSize: [5, 9], waveCount: 3,
   },
   {
@@ -81,7 +81,7 @@ export const FLOORS = [
       { id: 'leaper', weight: 2 },
       { id: 'bloater', weight: 2 },
     ],
-    objective: { type: 'nodes', count: 4, label: 'PUMP STATIONS', verb: 'Drain the flooded stairwell' },
+    objective: { type: 'carry', count: 4, label: 'PUMP CORES', verb: 'Carry four pump cores to the drains — both hands' },
     waveSize: [6, 10], waveCount: 3,
   },
   {
@@ -144,7 +144,7 @@ export const FLOORS = [
       { id: 'brute', weight: 2 },
       { id: 'glitchling', weight: 2 },
     ],
-    objective: { type: 'nodes', count: 4, label: 'IRRIGATION VALVES', verb: 'Convince the garden to open a path' },
+    objective: { type: 'pattern', count: 5, label: 'BLOOM SEQUENCE', verb: 'Watch what the garden does, then do it back' },
     waveSize: [7, 12], waveCount: 4,
   },
   {
@@ -165,7 +165,7 @@ export const FLOORS = [
       { id: 'enforcer', weight: 2 },
       { id: 'sentry', weight: 2 },
     ],
-    objective: { type: 'nodes', count: 4, label: 'HEAT SINKS', verb: 'Cool the shaft enough to climb it' },
+    objective: { type: 'timed', count: 4, label: 'HEAT SINKS', verb: 'Hold all four heat sinks open at once' },
     waveSize: [8, 13], waveCount: 4,
   },
   {
@@ -208,7 +208,7 @@ export const FLOORS = [
       { id: 'mirrorself', weight: 2 },
       { id: 'brute', weight: 2 },
     ],
-    objective: { type: 'nodes', count: 5, label: 'BUS TERMINALS', verb: 'Free five buses to route the lift' },
+    objective: { type: 'circuit', count: 6, label: 'BUS TERMINALS', verb: 'Free every bus — each one drags its neighbours with it' },
     waveSize: [9, 15], waveCount: 4,
   },
   {

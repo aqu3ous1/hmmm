@@ -89,10 +89,31 @@ pairs, and the only fix is to swap one out. There are 15 synergies and 9
 desynergies, and they don't apply to every gun, so the mixing and matching is
 the game.
 
-**Clear the objective, then the boss.** Every floor seals its final room until
-you finish the floor's objective — power panels, cooling valves, house chips,
-session badges. Engaging a panel starts a Zombies-style holdout: several waves
-of enemies before it locks in. Then the seal drops and something is waiting.
+**Every floor asks for something different.** The final room stays sealed until
+you finish that floor's objective, and no two floors want the same thing:
+
+| Floor | What it wants |
+| --- | --- |
+| **B1** Cold Storage | Engage three breaker panels and hold the ground around each |
+| **1** The Sorting Floor | Find the manifest, then jam four arms in the order it gives |
+| **2** The Server Farm | Four cooling valves, unmarked, tucked in the corners of the racks |
+| **3** Aquatics Lab | Carry four pump cores to the drains — both hands, so no shooting |
+| **4** The Neon Strip | Take four House Chips off the elites carrying them |
+| **5** The Alpha Wing | Log out four abandoned sessions |
+| **6** The Garden | Watch the bloom sequence, then play it back |
+| **7** The Kiln | Hold all four heat sinks open at once, against a clock |
+| **8** Hall of Mirrors | Hit five stage marks and end the rehearsal |
+| **9** Substrate Layer | Free every bus — each one drags its two neighbours with it |
+| **10** Root | Sever three anchors and open the last door |
+
+Get a sequence wrong, let the Kiln's clock run out, or touch the wrong bloom,
+and the floor notices.
+
+**There is a layer under all of that.** Every floor hides maintenance logs in
+dead ends, one locked cache whose key is deliberately as far from it as the
+floor allows, and one thing that is only there to be found. None of it is on
+the compass and none of it is required. The **Archive** on the title screen
+keeps what you have recovered, and blanks for what you haven't.
 
 **Headshots pay.** Every enemy and boss carries a head hitbox taken straight
 from its model. Landing one is 2.5x on most weapons, 3.2x on the Desert Eagle
@@ -130,7 +151,10 @@ sitting.
 | **10** | Root | Dr. Kimvatch (Root Process) |
 
 Each floor has its own palette, fog, prop set, enemy roster, music mode and
-tempo, and its own pieces of the story. Two bosses have bespoke mechanics:
+tempo, its own objective, and its own pieces of the story. Boss fights open
+with a cutscene — the door sealing behind you, an arc around whatever is in
+the room, and a settle back to eye level as it starts talking. Any key skips
+it. Two bosses have bespoke mechanics:
 **Synar & Gwynak** tag each other in and out of the ring mid-fight, and the
 **Doppelgänger** mirrors whatever weapon *you* are currently holding.
 
@@ -180,11 +204,13 @@ src/
   main.js           game orchestration: floors, waves, interaction, screens
   version.js        the build stamp shown on the title screen
   core/             input (pointer lock), procedural audio, math + RNG
-  world/            floor configs, grid level generation, geometry helpers
+  world/            floor configs, level generation, per-floor objectives,
+                    the optional lore/cache/curio layer, geometry helpers
   entities/         player controller, enemy AI + flow-field pathing, bosses
   combat/           weapon data, synergy resolution, firing runtime, projectiles
   props/            the chest and its slot-machine reveal
-  render/           every mesh in the game + the post-processing chain
+  render/           every mesh in the game, the gun parts bin, the cutscene
+                    director, the environment probe + the post-processing chain
   fx/               particles, rings, tracers, damage numbers
   story/            Dr. Kimvatch's script and the floor beats
   ui/               HUD bindings, codex, loadout panel
@@ -213,7 +239,20 @@ Some notes on how it works, in case you want to poke at it:
 - **Every enemy and boss is modelled individually** rather than from a shared
   humanoid template, because silhouette is the only thing that reads at combat
   distance. Each model also declares where its head is, and the headshot test
-  uses that volume directly.
+  uses that volume directly. Surfaces come from the enemy's family, so flesh,
+  machine, creature and anomaly reflect light differently instead of being the
+  same plastic in four colours.
+- **Weapons are built from a parts bin** (`src/render/weaponKit.js`): receivers,
+  barrels, picatinny rails, fasteners, magazines, grips, sights, optics and
+  muzzle devices, assembled into 22 guns of 25–136 parts each. Slides, bolts,
+  cylinders, drums and magazines are separate sub-assemblies, so they cycle when
+  you fire and drop when you reload.
+- **Structure is neutral and the light carries the colour.** Deriving the floor,
+  the walls and the ceiling from the floor's palette hue — and then multiplying
+  that hue again through the ambient, the hemisphere, the fixtures, the
+  reflections and the grade — is what turned the Server Farm into one flat green
+  sheet. Now the fixtures are the floor's colour and everything filling in
+  around them sits opposite on the wheel.
 - **Audio** is entirely synthesised: gunshots are filtered noise bursts shaped
   per weapon, and the score is a scheduled arpeggiator whose scale, tempo and
   timbre come from the floor config, with density that rises as enemies close in.
@@ -244,8 +283,10 @@ Two more probes, for looking at things rather than asserting on them:
 node tools/look.mjs --all                 # one screenshot per floor
 node tools/look.mjs --floor 4 --weapon nimbo
 node tools/look.mjs --floor 2 --raw       # same frame with post-processing off
-node tools/lineup.mjs                     # every enemy side by side
-node tools/lineup.mjs --bosses --from 5 --count 5
+node tools/cast.mjs                       # contact sheet of all 18 enemies
+node tools/cast.mjs --bosses              # …and the 10 bosses
+node tools/guns.mjs                       # …and all 22 weapons
+node tools/guns.mjs ak47 deagle --angle 1.2
 node tools/vm.mjs behemoth                # one weapon's viewmodel, isolated
 node tools/pick.mjs 4                     # what mesh is under these screen points
 node tools/perf.mjs                       # draw calls, triangles, frame timing

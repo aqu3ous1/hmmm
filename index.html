@@ -115,6 +115,7 @@
       <button id="btnStart" class="primary">BEGIN SESSION</button>
       <button id="btnHow">CONTROLS &amp; RULES</button>
       <button id="btnCodex">WEAPON CODEX</button>
+      <button id="btnArchive">ARCHIVE</button>
     </div>
     <div class="title-foot">Headphones recommended. Click to lock the mouse; <b>Esc</b> to release.</div>
     <div id="buildStamp" class="build-stamp">BUILD —</div>
@@ -160,6 +161,22 @@
     <h2>WEAPON CODEX</h2>
     <div id="codexNote">Everything the Pod can issue. It will not issue what you ask for.</div>
     <div id="codexList"></div>
+    <button class="back primary">BACK</button>
+  </div>
+
+  <div id="loreScreen" class="screen hidden">
+    <div id="loreCard">
+      <div id="loreKind">MAINTENANCE LOG</div>
+      <h2 id="loreTitle">—</h2>
+      <pre id="loreBody"></pre>
+      <div class="hint">Press <b>E</b> or <b>Esc</b> to close</div>
+    </div>
+  </div>
+
+  <div id="archiveScreen" class="screen hidden">
+    <h2>ARCHIVE</h2>
+    <div id="archiveNote">Everything the Pod did not mean for you to read.</div>
+    <div id="archiveList"></div>
     <button class="back primary">BACK</button>
   </div>
 

@@ -86,6 +86,9 @@ export class Input {
     return { yaw, pitch };
   }
 
+  /** True if any key was pressed this frame — used to skip cutscenes. */
+  anyPressed() { return this.pressedThisFrame.size > 0; }
+
   endFrame() {
     this.pressedThisFrame.clear();
     this.releasedThisFrame.clear();

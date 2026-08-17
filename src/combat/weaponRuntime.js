@@ -44,6 +44,15 @@ export class WeaponRuntime {
     const e = this.eff(w);
     const now = ctx.now;
 
+    // Both hands full: you can walk and you can be hit, and that is all. The
+    // trade is the point of a carry objective — otherwise it is just a slower
+    // walk to the same button.
+    if (ctx.player.carryPenalty < 1) {
+      ctx.player.firing = false;
+      w.charge = 0;
+      return;
+    }
+
     // Reload completion
     if (w.reloading && now >= w.reloadEnd) {
       w.reloading = false;
@@ -319,7 +328,7 @@ export class WeaponRuntime {
 
     if (hits.length && (!wall.hit || hits[0].dist < wall.dist)) {
       const t = hits[0].target;
-      ctx.particles.beam(ctx.muzzle.x, ctx.muzzle.y, ctx.muzzle.z, t.pos.x, t.pos.y + t.height * 0.5, t.pos.z, {
+      ctx.particles.beam(ctx.muzzle.x, ctx.muzzle.y, ctx.muzzle.z, t.pos.x, t.feetY + t.height * 0.5, t.pos.z, {
         color: 0x6fd8ff, width: 0.05, life: 0.25,
       });
       this.applyHit(ctx, w, e, t, e.damage, { ux: _dir.x, uy: 0, uz: _dir.z });
@@ -443,7 +452,7 @@ export class WeaponRuntime {
     ctx.hitMarker(crit || head, head);
 
     const px = opts.point?.x ?? target.pos.x;
-    const py = opts.point?.y ?? (target.pos.y + target.height * 0.55);
+    const py = opts.point?.y ?? (target.feetY + target.height * 0.55);
     const pz = opts.point?.z ?? target.pos.z;
     ctx.particles.burst(px, py, pz, crit ? 8 : 4, {
       color: target.type?.build?.body ?? 0xff5a5a, speed: 4, size: 0.06, life: 0.3,
