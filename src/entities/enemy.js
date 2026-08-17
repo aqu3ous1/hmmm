@@ -133,6 +133,9 @@ export class Enemy {
     this.fuse = -1;
     this.vy = 0;
     this.onGround = true;
+    this.attackAnim = 0;
+    this.lookY = 0;
+    this.lookX = 0;
 
     this.mesh = buildEnemyMesh(t);
     this.mesh.position.copy(this.pos);
@@ -191,6 +194,16 @@ export class Enemy {
   update(dt, ctx) {
     const t = this.type;
     const { player, level, flow, now, fire, particles } = ctx;
+
+    // Frozen: a cutscene is running. Keep breathing and keep looking at him —
+    // a room of statues during a boss reveal is worse than no reveal — but do
+    // not move, do not attack, and do not tick any timer that would fire the
+    // moment control comes back.
+    if (ctx.frozen) {
+      this.vel.set(0, 0, 0);
+      this._animate(dt, now, ctx);
+      return;
+    }
 
     this.flash = Math.max(0, this.flash - dt);
     this.stagger = Math.max(0, this.stagger - dt);
@@ -401,7 +414,7 @@ export class Enemy {
       this.facing += diff * Math.min(1, dt * 7);
     }
 
-    this._animate(dt, now);
+    this._animate(dt, now, ctx);
   }
 
   _meleeTry(dt, ctx, distToPlayer) {
@@ -410,6 +423,7 @@ export class Enemy {
     if (distToPlayer > this.type.attackRange + ctx.player.radius) return;
     if (!ctx.level.lineOfSight(this.pos.x, this.pos.z, ctx.player.pos.x, ctx.player.pos.z)) return;
     this.attackCd = this.type.attackCd;
+    this.attackAnim = 1;
     ctx.onMelee?.(this, this.damage);
   }
 
@@ -432,7 +446,8 @@ export class Enemy {
     this.burstTimer = 0;
   }
 
-  _animate(dt, now) {
+  _animate(dt, now, ctx) {
+    this.attackAnim = Math.max(0, this.attackAnim - dt * 3.4);
     const speed = Math.hypot(this.vel.x, this.vel.z);
     this.animPhase += dt * (2.4 + speed * 1.9);
     const m = this.mesh;
@@ -440,9 +455,45 @@ export class Enemy {
     m.rotation.y = this.facing;
 
     const upper = m.userData.upper;
+    const head = m.userData.head;
     const legL = m.userData.legL;
     const legR = m.userData.legR;
     const swing = Math.sin(this.animPhase) * Math.min(0.85, 0.14 + speed * 0.1);
+
+    // Head tracking. The body turns slowly and the head gets there first, which
+    // is what makes a thing look like it has noticed you rather than like it is
+    // being dragged toward you on a rail.
+    if (head) {
+      const p = ctx?.player?.pos;
+      let wantY = 0, wantX = 0;
+      if (p) {
+        const dx = p.x - this.pos.x, dz = p.z - this.pos.z;
+        const want = Math.atan2(dx, dz);
+        // Relative to the body, wrapped into (-pi, pi].
+        let rel = want - this.facing;
+        while (rel > Math.PI) rel -= Math.PI * 2;
+        while (rel < -Math.PI) rel += Math.PI * 2;
+        // A neck has limits; past them the head just stares straight ahead.
+        wantY = Math.max(-1.05, Math.min(1.05, rel));
+        const dy = (p.y + 1.5) - (this.pos.y + this.baseY + this.headOffset);
+        const flat = Math.hypot(dx, dz) || 0.001;
+        wantX = Math.max(-0.5, Math.min(0.5, -Math.atan2(dy, flat)));
+      }
+      // Idle drift when there is nothing to look at, so it is never dead still.
+      const idle = Math.sin(now * 0.7 + this.animPhase * 0.13) * 0.13;
+      const k = Math.min(1, dt * 6);
+      this.lookY = (this.lookY ?? 0) + (wantY + idle * 0.3 - (this.lookY ?? 0)) * k;
+      this.lookX = (this.lookX ?? 0) + (wantX - (this.lookX ?? 0)) * k;
+      head.rotation.y = this.lookY;
+      head.rotation.x = this.lookX;
+      // A small counter-lean, so the neck reads as attached to shoulders.
+      head.rotation.z = -this.lookY * 0.12 + Math.sin(this.animPhase * 0.5) * 0.02;
+    }
+
+    // Breathing: a slow vertical swell that runs whether or not it is moving.
+    // Without it a stationary enemy is a statue, and statues are not scary.
+    const breath = Math.sin(now * 1.35 + (this.id % 17)) * 0.5 + 0.5;
+    this.breath = breath;
 
     if (this.type.flying) {
       m.position.y += Math.sin(this.animPhase * 0.9) * 0.22;
@@ -457,10 +508,14 @@ export class Enemy {
       if (legL) legL.rotation.x = swing;
       if (legR) legR.rotation.x = -swing;
       if (upper) {
-        upper.position.y = Math.abs(Math.sin(this.animPhase)) * 0.05 * (0.4 + speed * 0.12);
+        upper.position.y = Math.abs(Math.sin(this.animPhase)) * 0.05 * (0.4 + speed * 0.12)
+          + breath * 0.018 * (1 - Math.min(1, speed * 0.5));
         upper.rotation.z = Math.sin(this.animPhase) * 0.05;
         upper.rotation.y = Math.sin(this.animPhase) * 0.06;
-        upper.rotation.x = (this.type.build.slouch || 0) * 0.5 + (this.charging > 0 ? 0.3 : 0);
+        // Winds up before a swing and leans into the follow-through.
+        const wind = this.attackAnim > 0 ? Math.sin(this.attackAnim * Math.PI) : 0;
+        upper.rotation.x = (this.type.build.slouch || 0) * 0.5
+          + (this.charging > 0 ? 0.3 : 0) - wind * 0.55;
         // Soft-bodied things jiggle as they move.
         if (this.wobble) {
           const w = 1 + Math.sin(this.animPhase * 1.6) * 0.05 * this.wobble;
@@ -505,8 +560,13 @@ export class Enemy {
   }
 
   dispose() {
+    // The mesh may already have been handed to the corpse system, which owns
+    // it from that point on — disposing it here would delete a rig that is
+    // still on screen falling over.
+    if (!this.mesh) return;
     disposeTree(this.mesh);
     if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
+    this.mesh = null;
   }
 }
 

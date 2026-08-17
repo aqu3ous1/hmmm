@@ -19,6 +19,9 @@ export class HUD {
       floorName: $('floorName'),
       objText: $('objText'),
       objBar: $('objBar').firstElementChild,
+      contract: $('contract'),
+      contractName: $('contractName'),
+      contractProg: $('contractProg'),
       waveInfo: $('waveInfo'),
       shardVal: $('shardVal'),
       runTime: $('runTime'),
@@ -177,6 +180,67 @@ export class HUD {
   }
 
   /**
+   * Crosshair spread, as a CSS variable the four arms read.
+   *
+   * A fixed reticle lies to the player: it says the shot goes where the dot
+   * is, which stops being true the moment they sprint or hold the trigger.
+   * Opening it with actual accumulated spread is the cheapest honest feedback
+   * in a shooter.
+   */
+  setSpread(px) {
+    if (!this.el.crosshair) return;
+    const v = Math.max(0, Math.min(26, px));
+    if (Math.abs(v - (this._spread ?? -1)) < 0.35) return;
+    this._spread = v;
+    this.el.crosshair.style.setProperty('--spread', `${v.toFixed(1)}px`);
+  }
+
+  /**
+   * A wedge on the rim pointing at whatever just hit you. Being shot from
+   * behind by something you never saw is only fair if the HUD says so.
+   */
+  damageFrom(angleRad) {
+    if (!this.el.hurtRing) {
+      const el = document.createElement('div');
+      el.id = 'hurtRing';
+      document.getElementById('hud').appendChild(el);
+      this.el.hurtRing = el;
+      this._wedges = [];
+    }
+    // Reuse a small pool — several hits in a second is normal.
+    let w = this._wedges.find((x) => x.life <= 0);
+    if (!w) {
+      const d = document.createElement('i');
+      this.el.hurtRing.appendChild(d);
+      w = { el: d, life: 0 };
+      this._wedges.push(w);
+      if (this._wedges.length > 6) this._wedges.shift();
+    }
+    w.life = 1.1;
+    w.el.style.transform = `rotate(${(angleRad * 180 / Math.PI).toFixed(1)}deg)`;
+    w.el.style.opacity = '1';
+  }
+
+  _updateWedges(dt) {
+    if (!this._wedges) return;
+    for (const w of this._wedges) {
+      if (w.life <= 0) continue;
+      w.life -= dt;
+      w.el.style.opacity = String(Math.max(0, w.life / 1.1) * 0.9);
+      if (w.life <= 0) w.el.style.opacity = '0';
+    }
+  }
+
+  /** The active side contract, or null to hide the strip. */
+  setContract(title, progress) {
+    if (!this.el.contract) return;
+    if (!title) { this.el.contract.classList.add('hidden'); return; }
+    this.el.contract.classList.remove('hidden');
+    this.el.contractName.textContent = title;
+    this.el.contractProg.textContent = progress || '';
+  }
+
+  /**
    * A countdown, for objectives that run against a clock. `frac` drives the
    * bar; passing null clears it and hands the panel back to the objective.
    */
@@ -251,6 +315,7 @@ export class HUD {
   setCompass(text) { this.el.compass.textContent = text; }
 
   update(dt) {
+    this._updateWedges(dt);
     if (this._hitTimer > 0) {
       this._hitTimer -= dt;
       if (this._hitTimer <= 0) this.el.hitmarker.classList.remove('on', 'head', 'crit');

@@ -56,7 +56,11 @@ export class Player {
     this.fists = null;            // populated by the game with makeWeapon('knuckles')
     this.swapCooldown = 0;
 
-    this.stats = { kills: 0, shotsFired: 0, damageDealt: 0, damageTaken: 0, deaths: 0, bossKills: 0 };
+    this.stats = {
+      kills: 0, shotsFired: 0, damageDealt: 0, damageTaken: 0, deaths: 0, bossKills: 0,
+      // Counters the contract board measures against.
+      timesHit: 0, headshots: 0, meleeKills: 0, shardsSpent: 0,
+    };
     this.alive = true;
   }
 
@@ -103,6 +107,7 @@ export class Player {
     const dmg = Math.max(1, Math.round(amount));
     this.health -= dmg;
     this.stats.damageTaken += dmg;
+    this.stats.timesHit++;
     this.lastDamageTime = 0;
     this.shake = Math.min(1.4, this.shake + dmg * 0.016);
     if (this.health <= 0) { this.health = 0; this.alive = false; }
@@ -123,6 +128,7 @@ export class Player {
   spendShards(n) {
     if (this.shards < n) return false;
     this.shards -= n;
+    this.stats.shardsSpent += n;
     return true;
   }
 

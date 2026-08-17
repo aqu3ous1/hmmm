@@ -186,7 +186,7 @@ export const FLOORS = [
       { id: 'husk', weight: 3 },
       { id: 'sprinter', weight: 2 },
     ],
-    objective: { type: 'keycards', count: 5, label: 'STAGE MARKS', verb: 'Hit five stage marks to end the rehearsal' },
+    objective: { type: 'marks', count: 5, label: 'STAGE MARKS', verb: 'Hit each lit mark before the spotlight moves on' },
     waveSize: [8, 14], waveCount: 4,
   },
   {

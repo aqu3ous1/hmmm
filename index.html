@@ -36,6 +36,11 @@
         <div id="objText">—</div>
         <div id="objBar"><i></i></div>
       </div>
+      <div id="contract" class="hidden">
+        <span class="cLabel">CONTRACT</span>
+        <span id="contractName">—</span>
+        <span id="contractProg"></span>
+      </div>
       <div id="waveInfo" class="hidden"></div>
     </div>
 
@@ -101,14 +106,26 @@
 
   <!-- ===================== Screens ===================== -->
 
-  <div id="titleScreen" class="screen">
+  <div id="titleScreen" class="screen live">
+    <div class="title-corner tl">
+      <span class="tick">POD 9001</span>
+      <span class="tick dim">SUBLEVEL B1 · COLD STORAGE</span>
+      <span class="tick dim">ATMOSPHERE NOMINAL</span>
+    </div>
+    <div class="title-corner tr">
+      <span class="tick">SESSION 001</span>
+      <span class="tick dim">PATIENT: SANDLOR, M.</span>
+      <span class="tick warn">EXIT: LOCKED<i class="blink">_</i></span>
+    </div>
+
     <div class="title-art">
-      <div class="title-sub">TECHNO TRAINING POD 9001 — PATIENT SESSION</div>
-      <h1>INHIBITED<span>ABYSS</span></h1>
-      <div class="title-rule"></div>
+      <div class="title-sub"><i></i>TECHNO TRAINING POD 9001 — PATIENT SESSION<i></i></div>
+      <h1 data-text="INHIBITED">INHIBITED<span data-text="ABYSS">ABYSS</span></h1>
+      <div class="title-rule"><b></b></div>
       <p class="title-blurb">
-        You are Michael Sandlor. Ten floors and a basement. Two weapons at a time,
-        never the ones you asked for, and a door that only opens for someone who finished.
+        You are <b>Michael Sandlor</b>. Ten floors and a basement. Two weapons at a
+        time, never the ones you asked for, and a door that only opens for
+        someone who finished.
       </p>
     </div>
     <div class="title-actions">

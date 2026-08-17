@@ -435,6 +435,7 @@ export class WeaponRuntime {
       res.dealt, head ? 'head' : crit ? 'crit' : 'normal',
     );
     if (head) {
+      player.stats.headshots++;
       ctx.audio.headshot();
       ctx.toast('HEADSHOT', 'good', 0.7);
       // A bright spray from the head itself, so the hit reads at a glance.
@@ -553,6 +554,7 @@ export class WeaponRuntime {
   registerKill(ctx, weapon, viaOtherWeapon = false) {
     if (!weapon) return false;
     weapon.kills++;
+    if (weapon.kind === 'melee' && !viaOtherWeapon) ctx.player.stats.meleeKills++;
     if (!weapon.traits.includes('evolve')) return false;
     const stage = babyStage(weapon);
     const gain = viaOtherWeapon ? 3 : 1;

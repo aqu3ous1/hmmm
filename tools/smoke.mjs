@@ -76,6 +76,9 @@ try {
         for (let i = 0; i < 30; i++) {
           const k = c * 30 + i;
           if (g.state !== 'playing') break;
+          // Cutscenes freeze combat by design, so a headless run that sits
+          // through one measures nothing. Skip them the way a player would.
+          if (g.cine?.active) g.cine.skip();
           g.input.locked = true;
           g.input.mouse.left = fire;
           // Semi-auto weapons need a fresh press each shot.

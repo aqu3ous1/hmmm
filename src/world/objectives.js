@@ -731,6 +731,97 @@ export const OBJECTIVE_KINDS = {
   },
 
   /**
+   * Hall of Mirrors. The rehearsal has been running for a duration expressed
+   * in scientific notation, and it wants its marks hit. Each mark lights in
+   * turn, moves after a few seconds, and only counts while it is lit — so the
+   * floor is a chase against a spotlight rather than another glowing pillar.
+   */
+  marks: {
+    setup(g, cfg, rng) {
+      // More marks than the objective needs, so the sequence has somewhere to go.
+      g.stations = place(g, cfg, rng, cfg.objective.count + 3, 'panel', 0xe8f0fa);
+      g.markAt = rng.int(0, g.stations.length - 1);
+      g.markTimer = 9;
+      g.markWindow = 9;
+      g.markMissed = 0;
+    },
+    update(g, dt) {
+      for (let i = 0; i < g.stations.length; i++) {
+        const s = g.stations[i];
+        const lit = i === g.markAt;
+        idleAnim(g, s, dt, lit ? 0xffd24a : 0x2a3038);
+        s.group.userData.core.scale.setScalar(lit ? 1.3 + Math.sin(g.now * 7) * 0.18 : 0.45);
+        s.group.userData.ring.material.opacity = lit ? 0.75 : 0.1;
+        // A spotlight column, so the live mark is visible across the room.
+        if (lit && !s.beam) {
+          s.beam = new THREE.Mesh(
+            new THREE.ConeGeometry(1.4, 5, 16, 1, true),
+            new THREE.MeshBasicMaterial({
+              color: 0xffe6a8, transparent: true, opacity: 0.12,
+              side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+            }),
+          );
+          s.beam.position.set(s.pos.x, 2.5, s.pos.z);
+          s.beam.rotation.x = Math.PI;
+          g.propGroup.add(s.beam);
+        } else if (!lit && s.beam) {
+          g.propGroup.remove(s.beam);
+          s.beam.geometry.dispose();
+          s.beam.material.dispose();
+          s.beam = null;
+        }
+      }
+      g.markTimer -= dt;
+      g.hud.setTimer(`STAGE MARK — ${Math.max(0, g.markTimer).toFixed(1)}s`, g.markTimer / g.markWindow);
+      if (g.markTimer <= 0) {
+        g.markMissed++;
+        g.hud.setTimer(null);
+        punish(g, g.floorCfg, 3, 'MISSED YOUR MARK');
+        this._advance(g);
+      }
+    },
+    _advance(g) {
+      let next = g.markAt;
+      // Never twice in a row, and prefer a mark you have to actually cross to.
+      const ranked = g.stations.map((s, i) => ({ i, d: near(g, s.pos) }))
+        .filter((r) => r.i !== g.markAt)
+        .sort((a, b) => b.d - a.d);
+      next = ranked[Math.min(ranked.length - 1, 1 + (g.objective.done % 2))]?.i ?? next;
+      g.markAt = next;
+      g.markWindow = Math.max(5.5, 9 - g.objective.done * 0.6);
+      g.markTimer = g.markWindow;
+    },
+    offer(g, add) {
+      const s = g.stations[g.markAt];
+      if (!s) return;
+      add(near(g, s.pos), 'Hit the mark', () => {
+        g.objective.done++;
+        audio.levelUp();
+        g.particles.ring(s.pos.x, 0.2, s.pos.z, { from: 1, to: 8, life: 0.7, color: 0xffd24a });
+        g.hud.toast(`${g.objective.label} ${g.objective.done}/${g.objective.total}`, 'good', 2);
+        if (g.objective.done >= g.objective.total) {
+          g.hud.setTimer(null);
+          for (const o of g.stations) {
+            completed(g, o);
+            if (o.beam) { g.propGroup.remove(o.beam); o.beam = null; }
+          }
+          g._checkObjective();
+          return;
+        }
+        OBJECTIVE_KINDS.marks._advance(g);
+      });
+    },
+    force(g) {
+      g.hud.setTimer(null);
+      for (const s of g.stations) {
+        if (s.beam) { g.propGroup.remove(s.beam); s.beam = null; }
+        if (s.state !== 'done') completed(g, s);
+      }
+      g.objective.done = g.objective.total;
+    },
+  },
+
+  /**
    * Alpha Wing and Hall of Mirrors. Elites carry the item; killing one drops
    * it. Left as it was — it is already not a holdout, and hunting a marked
    * target through a floor is its own thing.

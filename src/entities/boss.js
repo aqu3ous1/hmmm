@@ -94,6 +94,16 @@ export class Boss {
 
   update(dt, ctx) {
     const { player, level, now } = ctx;
+
+    // Its own intro is not part of the fight. Without this the boss walks up
+    // during its reveal, hits you, and can be shot dead before the camera has
+    // finished introducing it.
+    if (ctx.frozen) {
+      this.vel?.set?.(0, 0, 0);
+      this._animate(dt, now, ctx);
+      return;
+    }
+
     this.flash = Math.max(0, this.flash - dt);
     this.marked = Math.max(0, this.marked - dt);
     this.stunned = Math.max(0, this.stunned - dt);

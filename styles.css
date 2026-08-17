@@ -670,3 +670,194 @@ ul.rules b { color: var(--ink); font-weight: 400; }
    framed shot is the fastest way to make it stop being one. */
 #hud.cinematic { opacity: 0; transition: opacity 0.45s ease; pointer-events: none; }
 #hud { transition: opacity 0.35s ease; }
+
+/* ------------------------------------------------------------ title, live */
+/* The menu sits over a rendered corridor rather than over a gradient, so the
+   screen itself has to be transparent and every panel has to earn its own
+   legibility with a local scrim. */
+.screen.live {
+  background: none;
+  justify-content: flex-start;
+  padding-top: 6.5vh;
+  gap: 0;
+}
+.screen.live::before { opacity: 0.22; }
+/* One scrim, weighted to the top and bottom, so the middle of the corridor
+   stays visible and the text still reads. */
+.screen.live::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    linear-gradient(180deg, rgba(2, 4, 8, 0.92) 0%, rgba(2, 4, 8, 0.34) 26%,
+      rgba(2, 4, 8, 0.06) 48%, rgba(2, 4, 8, 0.62) 76%, rgba(2, 4, 8, 0.94) 100%),
+    radial-gradient(ellipse 120% 80% at 50% 50%, transparent 30%, rgba(2, 4, 8, 0.75) 100%);
+}
+
+/* -- corner telemetry: the Pod talking to itself -- */
+.title-corner {
+  position: absolute; top: 26px; display: flex; flex-direction: column; gap: 6px;
+  font-size: 9px; letter-spacing: 0.26em; z-index: 2;
+  animation: titleFade 1.1s 0.5s ease both;
+}
+.title-corner.tl { left: 30px; align-items: flex-start; }
+.title-corner.tr { right: 30px; align-items: flex-end; }
+.title-corner .tick { color: var(--cyan); }
+.title-corner .tick.dim { color: #4a5866; }
+.title-corner .tick.warn { color: #ff6a5a; }
+.blink { font-style: normal; animation: caret 1.05s steps(2, end) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+
+/* -- the wordmark -- */
+.title-art { text-align: center; position: relative; z-index: 2; }
+.title-sub {
+  display: flex; align-items: center; justify-content: center; gap: 18px;
+  font-size: 9.5px; letter-spacing: 0.5em; color: #7f95ab; margin-bottom: 22px;
+  animation: titleFade 1s 0.25s ease both;
+}
+.title-sub i { display: block; width: 64px; height: 1px; background: linear-gradient(90deg, transparent, #4a6070); }
+.title-sub i:last-child { transform: scaleX(-1); }
+
+.title-art h1 {
+  position: relative;
+  font-size: clamp(52px, 11vw, 132px); font-weight: 700; line-height: 0.88;
+  letter-spacing: 0.1em; color: #f2f7fc;
+  text-shadow:
+    0 0 30px rgba(159, 216, 255, 0.35),
+    0 0 90px rgba(111, 216, 255, 0.25),
+    0 0 180px rgba(111, 216, 255, 0.14);
+  animation: titleDrop 1.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* A hair of chromatic separation — the Pod is a screen you are inside. */
+.title-art h1::before,
+.title-art h1::after {
+  content: attr(data-text); position: absolute; inset: 0;
+  pointer-events: none; opacity: 0.5;
+}
+.title-art h1::before { color: #2ee6ff; transform: translateX(-2px); mix-blend-mode: screen; }
+.title-art h1::after { color: #ff2e6a; transform: translateX(2px); mix-blend-mode: screen; }
+.title-art h1 span {
+  display: block; position: relative; color: var(--amber);
+  text-shadow:
+    0 0 30px rgba(255, 194, 74, 0.45),
+    0 0 90px rgba(255, 194, 74, 0.3),
+    0 0 200px rgba(255, 140, 40, 0.2);
+  animation: titleDrop 1.2s 0.14s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.title-art h1 span::before,
+.title-art h1 span::after {
+  content: attr(data-text); position: absolute; inset: 0; opacity: 0.45;
+}
+.title-art h1 span::before { color: #ff8a2e; transform: translateX(-2px); mix-blend-mode: screen; }
+.title-art h1 span::after { color: #ffe14a; transform: translateX(2px); mix-blend-mode: screen; }
+
+@keyframes titleDrop {
+  from { opacity: 0; transform: translateY(-18px) scale(1.04); filter: blur(10px); }
+}
+@keyframes titleFade { from { opacity: 0; transform: translateY(6px); } }
+
+/* A single scan line that sweeps the wordmark every few seconds. */
+.title-art::after {
+  content: ""; position: absolute; left: -6%; right: -6%; height: 2px; top: 0;
+  background: linear-gradient(90deg, transparent, rgba(190, 235, 255, 0.7), transparent);
+  animation: titleSweep 6.5s 1.6s ease-in-out infinite;
+  pointer-events: none; opacity: 0;
+}
+@keyframes titleSweep {
+  0% { top: 12%; opacity: 0; }
+  6% { opacity: 0.9; }
+  40% { top: 78%; opacity: 0.55; }
+  52% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+.title-rule {
+  position: relative; width: 300px; height: 1px; margin: 30px auto 26px;
+  background: linear-gradient(90deg, transparent, rgba(111, 216, 255, 0.55), transparent);
+  animation: titleFade 1s 0.6s ease both;
+}
+.title-rule b {
+  position: absolute; left: 50%; top: -3px; width: 7px; height: 7px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--cyan); box-shadow: 0 0 14px var(--cyan);
+}
+/* The blurb sits over the corridor, so it carries its own backing rather than
+   relying on the page scrim — text over a moving image is unreadable without. */
+.title-blurb {
+  max-width: 560px; font-size: 12.5px; line-height: 2; color: #b6c8d8;
+  padding: 16px 26px;
+  background: rgba(4, 8, 14, 0.55);
+  backdrop-filter: blur(7px);
+  border-top: 1px solid rgba(111, 216, 255, 0.14);
+  border-bottom: 1px solid rgba(111, 216, 255, 0.14);
+  animation: titleFade 1s 0.75s ease both;
+}
+.title-blurb b { color: #dbe8f5; font-weight: 400; }
+
+.title-actions {
+  margin-top: 40px; display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
+  position: relative; z-index: 2;
+  animation: titleFade 1s 0.9s ease both;
+}
+.screen.live button {
+  backdrop-filter: blur(6px);
+  background: rgba(8, 14, 22, 0.55);
+}
+.screen.live button.primary {
+  background: rgba(255, 194, 74, 0.1);
+  box-shadow: 0 0 30px rgba(255, 194, 74, 0.14), inset 0 0 22px rgba(255, 194, 74, 0.06);
+}
+.screen.live button.primary:hover {
+  box-shadow: 0 0 46px rgba(255, 194, 74, 0.3), inset 0 0 26px rgba(255, 194, 74, 0.12);
+}
+.screen.live .title-foot {
+  margin-top: 26px; position: relative; z-index: 2;
+  animation: titleFade 1s 1.05s ease both;
+}
+
+/* ---- side contracts ---------------------------------------------------- */
+#contract {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-top: 8px; padding: 7px 12px;
+  background: rgba(8, 14, 22, 0.7);
+  border-left: 2px solid var(--amber);
+  font-size: 10px; letter-spacing: 0.16em;
+  animation: contractIn 0.4s ease both;
+}
+@keyframes contractIn { from { opacity: 0; transform: translateX(-8px); } }
+#contract .cLabel { font-size: 8.5px; letter-spacing: 0.3em; color: #7a6a3a; }
+#contractName { color: var(--amber); }
+#contractProg { margin-left: auto; color: var(--dim); font-size: 9.5px; }
+
+.acceptRow { display: flex; gap: 12px; margin-bottom: 1rem; }
+.acceptRow button { padding: 10px 22px; font-size: 11px; }
+
+/* ---- reticle spread ---------------------------------------------------- */
+/* The arms sit at a base offset plus whatever spread the weapon has actually
+   accumulated, so the reticle stops lying about where the shot goes. */
+#crosshair { --spread: 0px; }
+.ch-t { transform: translateY(calc(var(--spread) * -1)); }
+.ch-b { transform: translateY(var(--spread)); }
+.ch-l { transform: translateX(calc(var(--spread) * -1)); }
+.ch-r { transform: translateX(var(--spread)); }
+#crosshair.wide .ch-t { transform: translateY(calc((var(--spread) + 4px) * -1)); }
+#crosshair.wide .ch-b { transform: translateY(calc(var(--spread) + 4px)); }
+#crosshair.wide .ch-l { transform: translateX(calc((var(--spread) + 4px) * -1)); }
+#crosshair.wide .ch-r { transform: translateX(calc(var(--spread) + 4px)); }
+#crosshair .ch { transition: transform 0.06s linear; }
+
+/* ---- damage direction -------------------------------------------------- */
+#hurtRing {
+  position: absolute; inset: 0; pointer-events: none; z-index: 4;
+}
+#hurtRing i {
+  position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+  transform-origin: 0 0; opacity: 0;
+  transition: opacity 0.12s linear;
+}
+/* The wedge itself, drawn out along the rotated axis. */
+#hurtRing i::after {
+  content: ""; position: absolute;
+  left: -78px; top: -190px; width: 156px; height: 84px;
+  background: radial-gradient(ellipse at 50% 100%,
+    rgba(255, 62, 62, 0.55), rgba(255, 62, 62, 0.16) 55%, transparent 72%);
+  clip-path: polygon(50% 100%, 6% 6%, 94% 6%);
+}

@@ -10,6 +10,7 @@ import { floorConfig, FLOOR_COUNT } from './world/floors.js';
 import { generateLayout, Level, CELL, WALL_H, GRID } from './world/level.js';
 import { objectiveKind } from './world/objectives.js';
 import { LORE, ALL_LORE, EGGS, buildTerminal, buildCache, buildCacheKey, buildEgg } from './world/secrets.js';
+import { contractFor } from './world/contracts.js';
 import { disposeTree } from './world/geometry.js';
 
 import { Player } from './entities/player.js';
@@ -28,6 +29,7 @@ import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/mo
 
 import { PostFX } from './render/postfx.js';
 import { Director, shot } from './render/director.js';
+import { TitleScene } from './render/titleScene.js';
 import { EnvironmentBuilder } from './render/env.js';
 import { BUILD, BUILD_NAME, BUILD_DATE } from './version.js';
 import { HUD, buildCodex, renderLoadoutDetail } from './ui/hud.js';
@@ -55,6 +57,9 @@ class Game {
     this.chests = [];
     this.nodes = [];
     this.secrets = [];
+    this.corpses = [];
+    this.contract = null;
+    this.contractsDone = 0;
     this.foundLore = new Set();
     this.foundEggs = new Set();
     this.cacheKeys = 0;
@@ -90,6 +95,10 @@ class Game {
 
     window.addEventListener('resize', () => this._resize());
     this._resize();
+
+    // The menu renders the Pod itself, so it needs the renderer, the post
+    // chain and the environment probe — all of which exist by now.
+    this._ensureTitleScene();
 
     this._last = performance.now();
     requestAnimationFrame((t) => this._frame(t));
@@ -217,7 +226,31 @@ class Game {
     };
   }
 
+  /** Build the menu corridor once, the first time the title screen shows. */
+  _ensureTitleScene() {
+    if (this.titleScene) return;
+    this.titleScene = new TitleScene(this.renderer, this.env);
+    this.titleScene.setSize(window.innerWidth, window.innerHeight);
+    // Parallax: the corridor leans with the cursor, which makes a static menu
+    // feel like a camera someone is holding.
+    window.addEventListener('pointermove', (e) => {
+      if (!this.titleScene || this.level) return;
+      this.titleScene.setPointer(
+        (e.clientX / window.innerWidth) * 2 - 1,
+        (e.clientY / window.innerHeight) * 2 - 1,
+      );
+    });
+  }
+
+  /** Tear the menu corridor down once a run starts — it is a lot of geometry. */
+  _disposeTitleScene() {
+    if (!this.titleScene) return;
+    this.titleScene.dispose();
+    this.titleScene = null;
+  }
+
   _resize() {
+    if (this.titleScene) this.titleScene.setSize(window.innerWidth, window.innerHeight);
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
@@ -256,6 +289,7 @@ class Game {
     this.input.releaseLock();
     audio.stopMusic(0.8);
     this.hud.hide();
+    this._ensureTitleScene();
     this.showScreen('titleScreen');
     this._clearFloor();
   }
@@ -270,7 +304,12 @@ class Game {
     if (this.boss) { this.boss.dispose(); this.boss = null; }
     for (const c of this.chests) c.dispose();
     this.chests.length = 0;
-    for (const n of (this.stations || [])) { disposeTree(n.group); this.propGroup.remove(n.group); }
+    for (const n of (this.stations || [])) {
+      disposeTree(n.group); this.propGroup.remove(n.group);
+      // Some kinds hang extra scenery off a station (the Hall of Mirrors puts
+      // a spotlight column over the live mark); it is not inside the group.
+      if (n.beam) { disposeTree(n.beam); this.propGroup.remove(n.beam); n.beam = null; }
+    }
     for (const c of (this.carryCores || [])) { disposeTree(c.group); this.propGroup.remove(c.group); }
     if (this.seqManifest) { disposeTree(this.seqManifest.group); this.propGroup.remove(this.seqManifest.group); this.seqManifest = null; }
     if (this.circuitLines) { disposeTree(this.circuitLines); this.propGroup.remove(this.circuitLines); this.circuitLines = null; }
@@ -329,6 +368,7 @@ class Game {
   }
 
   _buildFloor(index, cfg) {
+    this._disposeTitleScene();
     this._clearFloor();
     this.floorIndex = index;
     this.prologueActive = false;
@@ -414,6 +454,7 @@ class Game {
 
     // The optional layer needs to know where everything else went first.
     this._setupSecrets(cfg, rng);
+    this._postContract(cfg, rng);
 
     this.lift = {
       group: buildLift(cfg.palette.trim),
@@ -598,6 +639,207 @@ class Game {
     }
   }
 
+  /**
+   * Take the mesh off a dead enemy and let it fall over.
+   *
+   * Enemies used to blink out of existence the instant their health hit zero,
+   * which reads as a bug rather than as a kill — you never got the beat of
+   * confirmation that tells you to stop shooting and move on. The rig is
+   * detached from the entity (so nothing can path to it, shoot it or be hit by
+   * it) and then toppled, sunk and faded on its own short timeline.
+   */
+  _makeCorpse(enemy) {
+    const mesh = enemy.mesh;
+    if (!mesh || this.corpses.length > 14) { enemy.dispose(); return; }
+    // Hand the mesh over before dispose() can take it.
+    enemy.mesh = null;
+    enemy.dispose();
+
+    // Fall away from whatever killed it, with a little spin.
+    const p = this.player.pos;
+    const away = Math.atan2(mesh.position.x - p.x, mesh.position.z - p.z);
+    const materials = [];
+    mesh.traverse((o) => {
+      if (!o.material) return;
+      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+        if (!materials.includes(m)) { m.transparent = true; materials.push(m); }
+      }
+    });
+    this.corpses.push({
+      mesh, materials, t: 0,
+      life: enemy.type.family === 'machine' ? 1.5 : 1.9,
+      fallAxis: away,
+      spin: (Math.random() - 0.5) * 1.6,
+      flying: !!enemy.type.flying,
+      // Machines drop straight down and spark; flesh folds and sinks.
+      machine: enemy.type.family === 'machine',
+      sparked: false,
+      startY: mesh.position.y,
+    });
+    this.propGroup.add(mesh);
+  }
+
+  _updateCorpses(dt) {
+    for (let i = this.corpses.length - 1; i >= 0; i--) {
+      const c = this.corpses[i];
+      c.t += dt;
+      const k = Math.min(1, c.t / c.life);
+      const m = c.mesh;
+
+      if (c.flying) {
+        // Shot out of the air: drops, tumbling, and hits the floor hard.
+        const fall = Math.min(c.startY, 9.8 * c.t * c.t * 0.5);
+        m.position.y = c.startY - fall;
+        m.rotation.z += dt * c.spin * 3;
+        m.rotation.x += dt * 2.4;
+        if (m.position.y <= 0.05 && !c.sparked) {
+          c.sparked = true;
+          this.particles.burst(m.position.x, 0.2, m.position.z, 10,
+            { color: [0xffd24a, 0xffffff], speed: 5, size: 0.07, life: 0.4 });
+          audio.hit('metal');
+        }
+      } else {
+        // Topple: fast at first, then it settles into the floor.
+        const topple = Math.min(1, c.t / (c.life * 0.42));
+        const e = 1 - (1 - topple) * (1 - topple);
+        m.rotation.x = Math.cos(c.fallAxis) * e * 1.55;
+        m.rotation.z = -Math.sin(c.fallAxis) * e * 1.55;
+        m.rotation.y += dt * c.spin * 0.35;
+        m.position.y = -Math.max(0, k - 0.55) * 1.6;
+      }
+
+      if (c.machine && !c.sparked && c.t > c.life * 0.35) {
+        c.sparked = true;
+        this.particles.burst(m.position.x, m.position.y + 0.6, m.position.z, 8,
+          { color: [0x9fe4ff, 0xffffff], speed: 4, size: 0.05, life: 0.35 });
+      }
+
+      // Fade out over the last third rather than popping.
+      const fade = k < 0.66 ? 1 : 1 - (k - 0.66) / 0.34;
+      for (const mat of c.materials) mat.opacity = Math.max(0, fade);
+
+      if (k >= 1) {
+        disposeTree(m);
+        this.propGroup.remove(m);
+        swapRemove(this.corpses, i);
+      }
+    }
+  }
+
+  /**
+   * Post this floor's side contract on a board near the spawn.
+   *
+   * It is deliberately the first interactable you walk past: a contract you
+   * find halfway through the floor is one you have already failed by accident,
+   * which teaches players to ignore the board.
+   */
+  _postContract(cfg, rng) {
+    const def = contractFor(this.floorIndex, rng);
+    this.contract = null;
+    if (!def) return;
+    const spawn = this.level.rooms[0];
+    const spots = this.level._wallSpots(spawn);
+    const s = spots.length ? spots[rng.int(0, spots.length - 1)] : null;
+    const pos = s ? new THREE.Vector3(s.x, 0, s.z) : this.level.randomPointIn(spawn, rng, 2);
+    const group = buildTerminal(0xffd24a);
+    group.position.copy(pos);
+    group.rotation.y = s ? s.ry : rng() * TAU;
+    this.propGroup.add(group);
+    this.contract = { def, group, pos, state: 'offered', st: null };
+    this.secrets.push({ kind: 'contract', group, pos, contract: this.contract });
+  }
+
+  /** The posting itself, and the button that accepts it. */
+  _showContract(c) {
+    $('loreKind').textContent = 'FACILITIES POSTING';
+    $('loreTitle').textContent = c.def.title;
+    $('loreBody').textContent =
+      `${c.def.posted}\n\nGOAL\n  ${c.def.goal}\n\nREWARD\n  ${c.def.reward.label}\n\n`
+      + 'Accepting is optional and it can be failed. Nothing is taken from you\n'
+      + 'if you decline, and nothing is given to you if you do not finish.';
+    const card = $('loreCard');
+    let accept = card.querySelector('.acceptRow');
+    if (!accept) {
+      accept = document.createElement('div');
+      accept.className = 'acceptRow';
+      accept.innerHTML = '<button id="btnAccept" class="primary">ACCEPT CONTRACT</button>'
+        + '<button id="btnDecline">WALK AWAY</button>';
+      card.insertBefore(accept, card.querySelector('.hint'));
+    }
+    accept.style.display = '';
+    accept.querySelector('#btnAccept').onclick = () => {
+      c.state = 'active';
+      c.st = c.def.start(this);
+      audio.ui(680);
+      this.hud.toast(`CONTRACT ACCEPTED — ${c.def.title}`, 'good', 3);
+      this.hud.setContract(c.def.title, c.def.progress?.(this, c.st) || '');
+      accept.style.display = 'none';
+      this._closeLore();
+    };
+    accept.querySelector('#btnDecline').onclick = () => {
+      accept.style.display = 'none';
+      this._closeLore();
+    };
+    this.showScreen('loreScreen');
+    this.state = 'reading';
+    this.input.releaseLock?.();
+  }
+
+  _updateContract(dt) {
+    const c = this.contract;
+    if (!c) return;
+    const scr = c.group.userData.screen;
+    if (c.state === 'offered') {
+      scr.material.color.setHex(0xffd24a);
+      scr.material.opacity = 0.4 + Math.sin(this.now * 2.6) * 0.18;
+      return;
+    }
+    if (c.state !== 'active') { scr.material.opacity = 0.16; return; }
+    scr.material.color.setHex(0x6fd8ff);
+    scr.material.opacity = 0.42;
+
+    if (c.def.failed?.(this, c.st)) {
+      c.state = 'failed';
+      scr.material.color.setHex(0xff4a5a);
+      audio.deny();
+      this.hud.toast(`CONTRACT FAILED — ${c.def.title}`, 'bad', 3.2);
+      this.hud.setContract(null);
+      return;
+    }
+    if (c.def.check(this, c.st)) {
+      c.state = 'done';
+      this.contractsDone++;
+      this._payContract(c.def);
+      return;
+    }
+    this.hud.setContract(c.def.title, c.def.progress?.(this, c.st) || '');
+  }
+
+  _payContract(def) {
+    const r = def.reward;
+    audio.levelUp();
+    this.hud.setContract(null);
+    this.hud.banner('CONTRACT COMPLETE', def.title, 3.4);
+    this.hud.toast(`+ ${r.label}`, 'good', 4);
+    if (r.shards) this.player.addShards(r.shards);
+    if (r.maxHealth) {
+      this.player.maxHealth += r.maxHealth;
+      this.player.health = Math.min(this.player.maxHealth, this.player.health + r.maxHealth);
+    }
+    if (r.heal) this.player.health = Math.min(this.player.maxHealth, this.player.health + r.heal);
+    if (r.reroll) {
+      // A free reroll of whatever is in the active hand — the Vend-o-Tron
+      // charges for this and the price climbs, so it is worth real shards.
+      const held = this.player.slots.filter(Boolean).map((w) => w.id);
+      const pool = chestPool().filter((id) => !held.includes(id));
+      const id = pool[this.rng.int(0, Math.max(0, pool.length - 1))];
+      if (id) {
+        this._equipWeapon(id);
+        this.hud.toast(`REROLLED — ${WEAPONS[id].name}`, 'good', 3);
+      }
+    }
+  }
+
   _updateSecrets(dt) {
     for (const s of this.secrets) {
       if (s.kind === 'key' && !s.taken) {
@@ -646,6 +888,18 @@ class Game {
           audio.levelUp();
           this._payCache(s);
         });
+      } else if (s.kind === 'contract') {
+        const c = s.contract;
+        if (c.state === 'offered') {
+          consider(null, d, `Read the posting — ${c.def.title}`, () => {
+            this._showContract(c);
+          });
+        } else if (c.state === 'active') {
+          consider(null, d, `${c.def.title} — ${c.def.progress?.(this, c.st) || 'in progress'}`, () => {
+            this._showLore('ACTIVE CONTRACT', c.def.title,
+              `${c.def.posted}\n\nGOAL\n  ${c.def.goal}\n\nPROGRESS\n  ${c.def.progress?.(this, c.st) || '—'}\n\nREWARD\n  ${c.def.reward.label}`);
+          });
+        }
       } else if (s.kind === 'egg' && !s.found) {
         consider(null, d, `Look closer`, () => {
           s.found = true;
@@ -694,6 +948,8 @@ class Game {
   }
 
   _showLore(kind, title, body) {
+    const row = $('loreCard').querySelector('.acceptRow');
+    if (row) row.style.display = 'none';
     $('loreKind').textContent = kind;
     $('loreTitle').textContent = title;
     $('loreBody').textContent = body;
@@ -822,6 +1078,19 @@ class Game {
     const dt = Math.min(0.05, Math.max(0.0005, dtRaw));
     this.now += dt;
 
+    // The menu is a place, not a gradient: while there is no level, the title
+    // corridor is what the renderer is pointed at.
+    if (this.titleScene && !this.level) {
+      this.titleScene.update(dt);
+      this.post.render((target) => {
+        this.renderer.setRenderTarget(target);
+        this.renderer.clear();
+        this.renderer.render(this.titleScene.scene, this.titleScene.camera);
+      }, this.now);
+      this.input.endFrame();
+      return;
+    }
+
     if (this.state === 'playing') {
       this.update(dt);
     } else if (this.state === 'reading') {
@@ -890,10 +1159,14 @@ class Game {
     this._updateFlow(dt);
     this._updateEnemies(dt);
     this._updateBoss(dt);
-    this._updateProjectiles(dt);
+    // Anything already in the air is put on hold too — a bolt fired a frame
+    // before a cutscene started would otherwise arrive during it.
+    if (!this.cine?.active) this._updateProjectiles(dt);
     this._updateChests(dt);
     this._updateNodes(dt);
+    this._updateCorpses(dt);
     this._updateSecrets(dt);
+    this._updateContract(dt);
     this._updatePickups(dt);
     this._updateVendors(dt);
     this._updateHoldout(dt);
@@ -919,6 +1192,7 @@ class Game {
 
     // --- hud ---
     this._updateHud(dt);
+    this.hud.setSpread(this._reticleSpread());
   }
 
   // =======================================================================
@@ -936,8 +1210,8 @@ class Game {
     );
     return {
       player, level: this.level, now: this.now,
-      firing: this.input.locked && this.input.mouse.left,
-      firePressed: this.input.mouse.leftPressed,
+      firing: this.input.locked && this.input.mouse.left && !this.cine?.active,
+      firePressed: this.input.mouse.leftPressed && !this.cine?.active,
       muzzle: this.muzzle,
       projectiles: this.projectiles,
       particles: this.particles,
@@ -1213,7 +1487,7 @@ class Game {
 
     const idx = this.enemies.indexOf(enemy);
     if (idx >= 0) swapRemove(this.enemies, idx);
-    enemy.dispose();
+    this._makeCorpse(enemy);
   }
 
   _jumboBurst(enemy) {
@@ -1269,6 +1543,7 @@ class Game {
   _enemyCtx() {
     return {
       player: this.player, level: this.level, flow: this.flow, now: this.now,
+      frozen: !!this.cine?.active,
       audio, particles: this.particles,
       separation: (e) => this._separation(e),
       onMelee: (e, dmg) => this._enemyMelee(e, dmg),
@@ -1372,8 +1647,16 @@ class Game {
   }
 
   damagePlayer(amount, source, silent = false) {
+    // A cutscene is not a fight. The world keeps simulating underneath one so
+    // it does not visibly freeze, but nothing in it is allowed to land a hit.
+    if (this.cine?.active) return false;
     const p = this.player;
     if (!p.hurt(amount, source)) return false;
+    // Point at whatever did it, so being shot from behind is still readable.
+    if (source?.pos) {
+      const dx = source.pos.x - p.pos.x, dz = source.pos.z - p.pos.z;
+      this.hud.damageFrom(Math.atan2(dx, dz) - p.yaw);
+    }
     if (!silent) {
       audio.hurt();
       this.hud.screenFlash(0.18);
@@ -1386,6 +1669,7 @@ class Game {
 
   _bossCtx() {
     return {
+      frozen: !!this.cine?.active,
       player: this.player, level: this.level, now: this.now,
       particles: this.particles, audio,
       say: (text, kind) => this._sayNow(text, kind),
@@ -1460,6 +1744,122 @@ class Game {
    * The boss's own intro lines carry the shots, so a boss with three lines
    * gets three beats and a boss with one gets one.
    */
+  /**
+   * The moment the door stops being a door.
+   *
+   * The camera leaves Michael's eyes and looks at *him* for the first time —
+   * he is the only thing in the Pod that is a person, and the shot is the only
+   * place the game says so. Then it climbs, so the ten floors above are a
+   * physical fact rather than a number in a corner.
+   */
+  _playLockCutscene() {
+    if (!this.cine) { this._queue(STORY.glitchEvent, true); return; }
+    const at = () => this.player.pos;
+    this.hud.setCinematic(true);
+    this.cine.play([
+      // Snap round to face him, close, handheld.
+      {
+        from: () => { const p = at(); return [p.x + 2.6, 1.7, p.z + 2.6]; },
+        to: () => { const p = at(); return [p.x + 1.5, 1.6, p.z + 1.5]; },
+        look: () => { const p = at(); return [p.x, 1.5, p.z]; },
+        time: 2.6, shake: 0.05,
+        line: ['POD SYSTEM', 'SESSION CHECKPOINT — SYNCING…'],
+      },
+      {
+        from: () => { const p = at(); return [p.x + 1.5, 1.6, p.z + 1.5]; },
+        to: () => { const p = at(); return [p.x + 0.9, 1.55, p.z + 0.9]; },
+        look: () => { const p = at(); return [p.x, 1.5, p.z]; },
+        time: 2.2, shake: 0.11,
+        line: ['', 'S̷Y̸N̷C̶ ̴F̸A̷I̶L̷E̸D̴ — RETRY 3/3'],
+      },
+      // Pull up and away: the shaft above him, and everything left to climb.
+      {
+        from: () => { const p = at(); return [p.x + 0.9, 1.55, p.z + 0.9]; },
+        to: () => { const p = at(); return [p.x + 1.2, 9.5, p.z + 3.4]; },
+        look: () => { const p = at(); return [p.x, 1.2, p.z]; },
+        time: 4.4,
+        line: ['DR. KIMVATCH', 'The extraction handshake needs your session marked COMPLETE. Something just marked it LOCKED instead.'],
+        hold: 0.5,
+      },
+      {
+        from: () => { const p = at(); return [p.x + 1.2, 9.5, p.z + 3.4]; },
+        to: () => { const p = at(); return [p.x + 1.2, 6.0, p.z + 2.6]; },
+        look: () => { const p = at(); return [p.x, 1.5, p.z]; },
+        time: 3.6,
+        line: ['DR. KIMVATCH', 'It has exactly one verb. Finish the course — all ten floors — and the door opens because it has nothing else it knows how to do.'],
+        hold: 0.4,
+      },
+      // Back to his eyes, and hand the controls over mid-sentence.
+      {
+        from: () => { const p = at(); return [p.x + 1.2, 6.0, p.z + 2.6]; },
+        to: () => { const p = at(); return [p.x, p.y + 1.7, p.z]; },
+        look: () => { const p = at(); return [p.x, 1.5, p.z - 4]; },
+        time: 1.6,
+        line: ['DR. KIMVATCH', 'So we finish. You climb, I talk, and neither of us panics.'],
+      },
+    ], {
+      onDone: () => {
+        this.hud.setCinematic(false);
+        this.hud.banner('SESSION LOCKED', 'THE ONLY EXIT IS THE TOP', 4);
+        // The rest of the script still plays — the cutscene is the headline.
+        this._queue(STORY.glitchEvent.slice(4), true);
+      },
+    });
+  }
+
+  /**
+   * The beta reveal, on floor five, where all six alphas stopped.
+   *
+   * Shot on the floor's own husks rather than on Michael: the reveal is about
+   * them, and pointing the camera at one while Kimvatch explains what it used
+   * to be does more than eight lines of dialogue ever could.
+   */
+  _playRevealCutscene() {
+    if (!this.cine) { this._queue(STORY.betaReveal, true); return; }
+    // Find something to look at — a husk if the floor has one, otherwise him.
+    const husk = this.enemies.find((e) => e.type.id === 'husk' && e.alive);
+    const subject = husk || this.player;
+    const at = () => subject.pos;
+    const me = () => this.player.pos;
+    this.hud.setCinematic(true);
+    this.cine.play([
+      shot.push(at, {
+        dist: 7, height: 2.6, close: 3.2, time: 4.2, hold: 0.4,
+        line: ['DR. KIMVATCH', 'You are not the first trial patient. You are the first BETA patient.'],
+      }),
+      shot.orbit(at, {
+        radius: 4.5, height: 1.9, from: 0.6, to: 2.2, time: 4.6, hold: 0.3,
+        line: ['DR. KIMVATCH', 'There was an alpha group. Six people. They went in eleven months before you did, and they are all still in here.'],
+      }),
+      {
+        from: () => { const p = at(); return [p.x + 3, 2.0, p.z + 3]; },
+        to: () => { const p = at(); return [p.x + 1.3, 1.7, p.z + 1.3]; },
+        look: () => { const p = at(); return [p.x, 1.5, p.z]; },
+        time: 4.4, hold: 0.4,
+        line: ['DR. KIMVATCH', 'Nobody died. The Pod cannot kill you. Every time it beats you it puts you back at the start of the floor, and it is very patient about it.'],
+      },
+      {
+        from: () => { const p = at(); return [p.x + 1.3, 1.7, p.z + 1.3]; },
+        to: () => { const p = me(); return [p.x + 2.4, 3.4, p.z + 3.4]; },
+        look: () => { const p = me(); return [p.x, 1.5, p.z]; },
+        time: 4.6, hold: 0.4,
+        line: ['DR. KIMVATCH', 'They did not give up in one big moment. They gave up in about two hundred small ones. All six of them stopped on five.'],
+      },
+      {
+        from: () => { const p = me(); return [p.x + 2.4, 3.4, p.z + 3.4]; },
+        to: () => { const p = me(); return [p.x, p.y + 1.7, p.z]; },
+        look: () => { const p = me(); return [p.x, 1.5, p.z - 4]; },
+        time: 2.0,
+        line: ['DR. KIMVATCH', 'So do not get comfortable on this floor. Keep climbing, Michael. Please.'],
+      },
+    ], {
+      onDone: () => {
+        this.hud.setCinematic(false);
+        this.hud.banner('THE ALPHA WING', 'ALL SIX OF THEM STOPPED HERE', 4.4);
+      },
+    });
+  }
+
   _playBossIntro() {
     const boss = this.boss;
     const def = boss.def;
@@ -2197,9 +2597,13 @@ class Game {
     // Centre laterally, but anchor along the barrel near the grip rather than
     // at the centroid: the hands stay put and long weapons extend away from
     // the camera instead of reaching back past it.
+    // Short weapons need lifting: with the model centred, a pistol's whole
+    // silhouette sits below a rifle's and the loadout panel crops it. Bias by
+    // how tall the framed model actually is rather than by weapon category.
+    const framedH = size.y * k;
     this.vmModel.position.set(
       -centre.x * k,
-      -centre.y * k,
+      -centre.y * k + Math.max(0, 0.34 - framedH) * 0.55,
       -(box.min.z + size.z * 0.46) * k,
     );
     this.vmModel.userData.frameScale = k;
@@ -2323,6 +2727,24 @@ class Game {
     }
   }
 
+  /**
+   * How far the four reticle arms should sit from centre, in pixels.
+   *
+   * Built from the same numbers the shot actually uses: the weapon's cone,
+   * whatever the synergy layer did to it, plus movement and recoil. A reticle
+   * that does not move while you sprint is a reticle that is lying.
+   */
+  _reticleSpread() {
+    const w = this.player.weapon;
+    if (!w) return 0;
+    const e = this.runtime.eff(w);
+    const base = (e.spread || 0) * 900;
+    const speed = Math.hypot(this.player.vel.x, this.player.vel.z);
+    const move = Math.min(9, speed * 1.15) * (this.player.sprinting ? 1.5 : 1);
+    const kick = this.vmKick * 60;
+    return base + move + kick;
+  }
+
   // ---- lighting ----
 
   _updateLights(dt) {
@@ -2385,18 +2807,20 @@ class Game {
   }
 
   _updateStory(dt) {
-    // Scripted beats
+    // Scripted beats. The two that change what the game *is* — the lock and
+    // the reveal — get the camera, because a line at the bottom of the screen
+    // during a firefight is a line the player reads while aiming.
     if (!this.glitchFired && this.floorIndex >= 1 && (this.floorTime > 95 || this.runTime > 400)) {
       this.glitchFired = true;
-      this._queue(STORY.glitchEvent, true);
       this.hud.glitchBurst(2.2);
       this.glitchFx = 1;
       audio.glitch(2);
       this.player.shake = 1.2;
+      this._playLockCutscene();
     }
     if (!this.betaRevealFired && this.floorIndex === 5 && this.floorTime > 26) {
       this.betaRevealFired = true;
-      this._queue(STORY.betaReveal, true);
+      this._playRevealCutscene();
     }
     if (this.player.health < this.player.maxHealth * 0.25 && this.now - (this._lastLowHp || -99) > 45) {
       this._lastLowHp = this.now;

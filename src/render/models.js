@@ -96,75 +96,143 @@ const ENEMY_BUILDERS = {
   sprinter(b, h) {
     const legH = h * 0.52, torso = h * 0.26;
     const headY = legH + torso * 0.9;
+    const bone = 0xe8d4c0, raw = 0x8a2a2a;
+    // Everything about this thing says *forward*. The head clears the torso,
+    // the arms trail behind, the ribcage has burst through the skin, and the
+    // legs are already ahead of the centre of mass. Read at forty metres by
+    // silhouette alone: a body falling in your direction on purpose.
     return {
       pivot: legH, headY, headR: 0.17,
       upper: [
-        // narrow torso thrown forward, ribs showing through torn cloth
-        part(B, b.body, { y: legH + torso * 0.5, z: 0.16, rx: 0.62, sx: 0.36, sy: torso, sz: 0.22 }),
-        ...[0, 1, 2].map((i) => part(B, 0xd8bfae, {
-          y: legH + torso * (0.35 + i * 0.22), z: 0.26 + i * 0.09, rx: 0.62,
-          sx: 0.3 - i * 0.04, sy: 0.04, sz: 0.05,
+        // Torso thrown flat forward, spine arched, ribs out through the front.
+        part(UNIT.capsule, b.body, { y: legH + torso * 0.5, z: 0.16, rx: 0.62, sx: 0.36, sy: torso * 0.62, sz: 0.24 }),
+        part(UNIT.wedge, shadeHex(b.body, 0.8), { y: legH + torso * 0.72, z: 0.02, rx: 0.62, ry: Math.PI, sx: 0.34, sy: 0.2, sz: 0.3 }),
+        ...[0, 1, 2, 3].map((i) => part(C, bone, {
+          y: legH + torso * (0.3 + i * 0.18), z: 0.28 + i * 0.075, rx: 0.62, rz: Math.PI / 2,
+          sx: 0.05, sy: 0.34 - i * 0.045, sz: 0.05,
         })),
-        // shoulders sit high and wide of the body
-        part(B, b.body, { x: 0.22, y: legH + torso * 0.86, z: 0.3, sx: 0.2, sy: 0.14, sz: 0.16 }),
-        part(B, b.body, { x: -0.22, y: legH + torso * 0.86, z: 0.3, sx: 0.2, sy: 0.14, sz: 0.16 }),
-        // head clears the torso entirely — the giveaway silhouette
-        part(S, b.head, { y: headY, z: 0.52, sx: 0.31, sy: 0.32, sz: 0.33 }),
-        part(B, shadeHex(b.head, 0.45), { y: headY - 0.14, z: 0.62, rx: 0.4, sx: 0.19, sy: 0.17, sz: 0.14 }),
-        emit(S, b.eye, { x: 0.09, y: headY + 0.04, z: 0.66, sx: 0.1, sy: 0.1, sz: 0.06 }),
-        emit(S, b.eye, { x: -0.09, y: headY + 0.04, z: 0.66, sx: 0.1, sy: 0.1, sz: 0.06 }),
-        ...[0, 1, 2, 3].map((i) => part(CN, shadeHex(b.head, 0.35), {
-          x: (i - 1.5) * 0.11, y: headY + 0.19, z: 0.46, rx: -0.8, sx: 0.08, sy: 0.26, sz: 0.08,
+        part(C, bone, { y: legH + torso * 0.52, z: 0.3, rx: 0.62, sx: 0.05, sy: torso * 0.8, sz: 0.05 }),
+        part(UNIT.lowSphere, raw, { y: legH + torso * 0.36, z: 0.3, sx: 0.2, sy: 0.16, sz: 0.12, smooth: true }),
+        // Shoulders high and wide, clavicles showing.
+        ...[1, -1].map((sg) => part(UNIT.lowSphere, b.body, {
+          x: sg * 0.23, y: legH + torso * 0.86, z: 0.3, sx: 0.22, sy: 0.2, sz: 0.2, smooth: true,
         })),
-        // arms flung wide and back — unmistakable from any angle
-        ...[1, -1].flatMap((sgn) => [
-          part(B, b.body, {
-            x: sgn * 0.4, y: legH + torso * 0.66, z: -0.02,
-            rz: sgn * 0.5, rx: -0.7, sx: 0.1, sy: torso * 0.9, sz: 0.1,
+        ...[1, -1].map((sg) => part(C, bone, {
+          x: sg * 0.15, y: legH + torso * 0.92, z: 0.34, rz: sg * 1.2, sx: 0.035, sy: 0.2, sz: 0.035,
+        })),
+        // Head thrust out past the shoulders — the giveaway.
+        part(UNIT.lowSphere, b.head, { y: headY, z: 0.52, sx: 0.31, sy: 0.32, sz: 0.36, smooth: true }),
+        part(UNIT.wedge, shadeHex(b.head, 0.6), { y: headY - 0.13, z: 0.64, rx: -0.5, ry: Math.PI / 2, rz: Math.PI / 2, sx: 0.16, sy: 0.16, sz: 0.2 }),
+        ...Array.from({ length: 6 }, (_, i) => part(UNIT.cone, bone, {
+          x: -0.06 + (i % 3) * 0.06, y: headY - 0.1 + Math.floor(i / 3) * 0.075, z: 0.68,
+          rx: Math.floor(i / 3) ? Math.PI : 0, sx: 0.035, sy: 0.1, sz: 0.035,
+        })),
+        emit(UNIT.lowSphere, b.eye, { x: 0.09, y: headY + 0.06, z: 0.66, sx: 0.11, sy: 0.11, sz: 0.06 }),
+        emit(UNIT.lowSphere, b.eye, { x: -0.09, y: headY + 0.06, z: 0.66, sx: 0.11, sy: 0.11, sz: 0.06 }),
+        // Matted hair whipped back by the run.
+        ...[0, 1, 2, 3, 4].map((i) => part(UNIT.slab, shadeHex(b.head, 0.35), {
+          x: -0.12 + i * 0.06, y: headY + 0.16, z: 0.4 - (i % 2) * 0.06, rx: -0.9, rz: (i - 2) * 0.18,
+          sx: 0.07, sy: 0.3, sz: 0.05,
+        })),
+        // Arms flung back and out, hands open, fingers spread.
+        ...[1, -1].flatMap((sg) => [
+          part(UNIT.capsule, b.body, {
+            x: sg * 0.4, y: legH + torso * 0.66, z: -0.02, rz: sg * 0.5, rx: -0.7,
+            sx: 0.1, sy: torso * 0.5, sz: 0.1,
           }),
-          part(B, b.body, {
-            x: sgn * 0.56, y: legH + torso * 0.2, z: -0.34,
-            rz: sgn * 0.3, rx: -0.4, sx: 0.09, sy: torso * 0.85, sz: 0.09,
+          part(UNIT.capsule, b.body, {
+            x: sg * 0.56, y: legH + torso * 0.2, z: -0.34, rz: sg * 0.3, rx: -0.4,
+            sx: 0.09, sy: torso * 0.46, sz: 0.09,
           }),
-          part(S, b.head, { x: sgn * 0.62, y: legH - torso * 0.12, z: -0.5, sx: 0.13, sy: 0.15, sz: 0.13 }),
+          part(UNIT.lowSphere, b.head, { x: sg * 0.62, y: legH - torso * 0.12, z: -0.5, sx: 0.13, sy: 0.15, sz: 0.13, smooth: true }),
+          ...[0, 1, 2].map((i) => part(C, b.head, {
+            x: sg * (0.6 + (i - 1) * 0.05), y: legH - torso * 0.3, z: -0.56, rx: -0.35, rz: sg * (i - 1) * 0.3,
+            sx: 0.03, sy: 0.16, sz: 0.03,
+          })),
         ]),
-        // torn cloth trailing behind
-        part(B, shadeHex(b.body, 0.6), { y: legH + torso * 0.2, z: -0.2, rx: -0.5, sx: 0.3, sy: 0.36, sz: 0.24 }),
+        // Shredded clothing trailing.
+        ...[0, 1, 2].map((i) => part(UNIT.slab, shadeHex(b.body, 0.55), {
+          x: (i - 1) * 0.16, y: legH + torso * (0.24 - i * 0.06), z: -0.24 - i * 0.06,
+          rx: -0.5 - i * 0.15, rz: (i - 1) * 0.3, sx: 0.16, sy: 0.34, sz: 0.16,
+        })),
       ],
-      legL: [part(B, b.body, { x: 0.13, y: -legH * 0.34, z: 0.08, rx: 0.4, sx: 0.12, sy: legH * 0.62, sz: 0.12 }),
-        part(B, b.body, { x: 0.13, y: -legH * 0.8, z: 0.02, rx: -0.25, sx: 0.11, sy: legH * 0.55, sz: 0.11 })],
-      legR: [part(B, b.body, { x: -0.13, y: -legH * 0.34, z: -0.06, rx: -0.4, sx: 0.12, sy: legH * 0.62, sz: 0.12 }),
-        part(B, b.body, { x: -0.13, y: -legH * 0.8, z: 0.02, rx: 0.25, sx: 0.11, sy: legH * 0.55, sz: 0.11 })],
+      legL: [
+        part(UNIT.capsule, b.body, { x: 0.13, y: -legH * 0.32, z: 0.1, rx: 0.5, sx: 0.13, sy: legH * 0.4, sz: 0.13 }),
+        part(UNIT.lowSphere, b.head, { x: 0.13, y: -legH * 0.52, z: 0.16, sx: 0.15, sy: 0.15, sz: 0.15, smooth: true }),
+        part(UNIT.capsule, b.body, { x: 0.13, y: -legH * 0.76, z: 0.04, rx: -0.3, sx: 0.11, sy: legH * 0.4, sz: 0.11 }),
+        part(UNIT.wedge, shadeHex(b.body, 0.6), { x: 0.13, y: -legH + 0.05, z: 0.14, ry: Math.PI / 2, sx: 0.14, sy: 0.11, sz: 0.3 }),
+      ],
+      legR: [
+        part(UNIT.capsule, b.body, { x: -0.13, y: -legH * 0.32, z: -0.08, rx: -0.5, sx: 0.13, sy: legH * 0.4, sz: 0.13 }),
+        part(UNIT.lowSphere, b.head, { x: -0.13, y: -legH * 0.52, z: -0.12, sx: 0.15, sy: 0.15, sz: 0.15, smooth: true }),
+        part(UNIT.capsule, b.body, { x: -0.13, y: -legH * 0.76, z: 0.02, rx: 0.35, sx: 0.11, sy: legH * 0.4, sz: 0.11 }),
+        part(UNIT.wedge, shadeHex(b.body, 0.6), { x: -0.13, y: -legH + 0.05, z: 0.1, ry: Math.PI / 2, sx: 0.14, sy: 0.11, sz: 0.3 }),
+      ],
     };
   },
 
   bloater(b, h) {
     const legH = h * 0.2;
     const headY = h * 0.92;
+    const blister = shadeHex(b.body, 1.45);
+    const vein = 0x6a8a2a;
+    // A pressure vessel with a person somewhere in it. The sac is stretched
+    // thin enough to see through in places, split along one side, and the
+    // little head on top exists only to tell you which way it is facing.
     return {
       pivot: legH, headY, headR: 0.24, wobble: 1,
       upper: [
-        // the sac
-        part(S, b.body, { y: h * 0.5, sx: 1.5, sy: 1.32, sz: 1.42 }),
-        part(S, shadeHex(b.body, 1.25), { y: h * 0.42, z: 0.34, sx: 1.1, sy: 0.9, sz: 0.9 }),
-        // glowing seams
-        ...[0, 1, 2, 3].map((i) => emit(B, b.eye, {
-          y: h * (0.32 + i * 0.13), z: 0.6 - i * 0.04, rz: 0.1 * (i % 2 ? 1 : -1),
-          sx: 0.9 - i * 0.12, sy: 0.05, sz: 0.05, opacity: 0.9,
-        })),
-        // pustules
-        ...[[0.5, 0.62, 0.4], [-0.55, 0.5, 0.3], [0.2, 0.78, -0.5], [-0.3, 0.35, -0.45]].map(([px, py, pz]) =>
-          part(S, shadeHex(b.head, 1.1), { x: px, y: h * py, z: pz, sx: 0.3, sy: 0.28, sz: 0.3 })),
-        // tiny head sunk into the mass
-        part(S, b.head, { y: headY, sx: 0.4, sy: 0.36, sz: 0.4 }),
-        emit(S, b.eye, { x: 0.12, y: headY + 0.02, z: 0.19, sx: 0.09, sy: 0.09, sz: 0.05 }),
-        emit(S, b.eye, { x: -0.12, y: headY + 0.02, z: 0.19, sx: 0.09, sy: 0.09, sz: 0.05 }),
-        // stubby arms
-        part(C, b.body, { x: 0.78, y: h * 0.56, rz: 0.7, sx: 0.24, sy: 0.6, sz: 0.24 }),
-        part(C, b.body, { x: -0.78, y: h * 0.56, rz: -0.7, sx: 0.24, sy: 0.6, sz: 0.24 }),
+        // The sac, asymmetric — a perfect sphere reads as a beach ball.
+        part(UNIT.lowSphere, b.body, { y: h * 0.5, sx: 1.5, sy: 1.32, sz: 1.42, smooth: true }),
+        part(UNIT.lowSphere, shadeHex(b.body, 1.18), { x: 0.18, y: h * 0.42, z: 0.34, sx: 1.15, sy: 0.95, sz: 0.95, smooth: true }),
+        part(UNIT.lowSphere, shadeHex(b.body, 0.85), { x: -0.3, y: h * 0.62, z: -0.2, sx: 0.9, sy: 0.8, sz: 0.85, smooth: true }),
+        // Blisters, various sizes, clustered where the skin is tightest.
+        ...Array.from({ length: 11 }, (_, i) => {
+          const a = i * 2.399, r = 0.62 + (i % 3) * 0.06;
+          return part(UNIT.lowSphere, blister, {
+            x: Math.cos(a) * r, y: h * (0.34 + (i % 5) * 0.1), z: Math.sin(a) * r,
+            sx: 0.2 + (i % 4) * 0.07, sy: 0.18 + (i % 3) * 0.06, sz: 0.2 + (i % 4) * 0.07, smooth: true,
+          });
+        }),
+        // Veins tracking over the surface.
+        ...Array.from({ length: 7 }, (_, i) => {
+          const a = i * 0.9;
+          return part(C, vein, {
+            x: Math.cos(a) * 0.6, y: h * (0.4 + (i % 3) * 0.12), z: Math.sin(a) * 0.6,
+            rz: Math.cos(a) * 1.2, rx: Math.sin(a) * 1.2, sx: 0.05, sy: 0.7, sz: 0.05,
+          });
+        }),
+        // The split: a dark seam with something lit behind it.
+        part(B, 0x1a2208, { x: 0.62, y: h * 0.5, z: 0.2, rz: 0.3, sx: 0.09, sy: 0.85, sz: 0.5 }),
+        emit(B, b.eye, { x: 0.66, y: h * 0.5, z: 0.2, rz: 0.3, sx: 0.05, sy: 0.7, sz: 0.4, opacity: 0.75 }),
+        // A dozen little glands round the base, already leaking.
+        ...Array.from({ length: 8 }, (_, i) => {
+          const a = (i / 8) * Math.PI * 2;
+          return emit(UNIT.lowSphere, b.eye, {
+            x: Math.cos(a) * 0.68, y: h * 0.2, z: Math.sin(a) * 0.68,
+            sx: 0.11, sy: 0.09, sz: 0.11, opacity: 0.85,
+          });
+        }),
+        // Vestigial head, sunk into the shoulder of the sac.
+        part(UNIT.lowSphere, b.head, { y: headY, z: 0.16, sx: 0.44, sy: 0.42, sz: 0.44, smooth: true }),
+        part(UNIT.wedge, shadeHex(b.head, 0.7), { y: headY - 0.14, z: 0.3, rx: -0.4, ry: Math.PI / 2, rz: Math.PI / 2, sx: 0.2, sy: 0.18, sz: 0.2 }),
+        emit(UNIT.lowSphere, b.eye, { x: 0.11, y: headY + 0.05, z: 0.34, sx: 0.09, sy: 0.09, sz: 0.06 }),
+        emit(UNIT.lowSphere, b.eye, { x: -0.11, y: headY + 0.05, z: 0.34, sx: 0.09, sy: 0.09, sz: 0.06 }),
+        part(UNIT.lowSphere, shadeHex(b.body, 0.8), { y: headY - 0.26, sx: 0.5, sy: 0.24, sz: 0.5, smooth: true }),
+        // Two useless little arms, lost in the mass.
+        ...[1, -1].flatMap((sg) => [
+          part(UNIT.capsule, b.head, { x: sg * 0.78, y: h * 0.62, z: 0.24, rz: sg * 0.7, sx: 0.16, sy: 0.34, sz: 0.16 }),
+          part(UNIT.lowSphere, b.head, { x: sg * 0.9, y: h * 0.44, z: 0.34, sx: 0.19, sy: 0.19, sz: 0.19, smooth: true }),
+        ]),
       ],
-      legL: [part(C, b.body, { x: 0.32, y: -legH / 2, sx: 0.32, sy: legH, sz: 0.32 })],
-      legR: [part(C, b.body, { x: -0.32, y: -legH / 2, sx: 0.32, sy: legH, sz: 0.32 })],
+      legL: [
+        part(UNIT.capsule, b.head, { x: 0.3, y: -legH * 0.5, sx: 0.24, sy: legH * 0.9, sz: 0.24 }),
+        part(UNIT.wedge, shadeHex(b.head, 0.7), { x: 0.3, y: -legH + 0.05, z: 0.1, ry: Math.PI / 2, sx: 0.28, sy: 0.12, sz: 0.36 }),
+      ],
+      legR: [
+        part(UNIT.capsule, b.head, { x: -0.3, y: -legH * 0.5, sx: 0.24, sy: legH * 0.9, sz: 0.24 }),
+        part(UNIT.wedge, shadeHex(b.head, 0.7), { x: -0.3, y: -legH + 0.05, z: 0.1, ry: Math.PI / 2, sx: 0.28, sy: 0.12, sz: 0.36 }),
+      ],
     };
   },
 
@@ -472,111 +540,246 @@ const ENEMY_BUILDERS = {
 
   leaper(b, h) {
     const bodyY = h * 0.62;
+    const claw = 0xf0e8d8;
+    const wet = { metal: 0.14, rough: 0.3, smooth: true };
+    // Coiled, quadrupedal, back legs already loaded. Low and long so it reads
+    // as a different threat from anything upright, with the haunches as the
+    // heaviest shape — you should be able to tell it is about to jump.
     return {
       pivot: h * 0.5, headY: bodyY + 0.1, headR: 0.22,
       upper: [
-        // low crouched body, tail up
-        part(B, b.body, { y: bodyY, rx: -0.14, sx: 0.5, sy: 0.4, sz: 1.05 }),
-        part(B, shadeHex(b.body, 1.2), { y: bodyY + 0.16, rx: -0.14, sx: 0.34, sy: 0.14, sz: 0.85 }),
-        // wedge head with a sensory crest instead of eyes
-        part(B, b.head, { y: bodyY + 0.08, z: 0.62, rx: 0.16, sx: 0.38, sy: 0.3, sz: 0.44 }),
-        part(CN, b.head, { y: bodyY + 0.06, z: 0.88, rx: Math.PI / 2, sx: 0.3, sy: 0.32, sz: 0.24 }),
-        ...[0, 1, 2].map((i) => part(CN, shadeHex(b.head, 1.3), {
-          x: (i - 1) * 0.11, y: bodyY + 0.26, z: 0.6, rx: -0.7, sx: 0.08, sy: 0.3, sz: 0.08,
+        // Body: deep chest, narrow waist, high hips.
+        part(UNIT.capsule, b.body, { y: bodyY, z: 0.1, rx: Math.PI / 2, sx: 0.62, sy: 0.9, sz: 0.56, ...wet }),
+        part(UNIT.lowSphere, b.body, { y: bodyY + 0.04, z: 0.42, sx: 0.66, sy: 0.6, sz: 0.6, ...wet }),
+        part(UNIT.lowSphere, b.body, { y: bodyY + 0.1, z: -0.42, sx: 0.72, sy: 0.68, sz: 0.66, ...wet }),
+        // Spine ridge and plated back.
+        ...Array.from({ length: 7 }, (_, i) => part(UNIT.cone, b.accent ?? shadeHex(b.body, 1.4), {
+          y: bodyY + 0.3 - Math.abs(i - 3) * 0.02, z: 0.5 - i * 0.17, rx: -0.25,
+          sx: 0.18 - Math.abs(i - 3) * 0.02, sy: 0.3 - Math.abs(i - 3) * 0.04, sz: 0.14, ...wet,
         })),
-        emit(B, b.eye, { y: bodyY + 0.04, z: 0.83, sx: 0.24, sy: 0.04, sz: 0.03 }),
-        // segmented tail
-        ...[0, 1, 2].map((i) => part(B, b.body, {
-          y: bodyY + 0.16 + i * 0.16, z: -0.6 - i * 0.24, rx: 0.5,
-          sx: 0.16 - i * 0.03, sy: 0.16 - i * 0.03, sz: 0.34,
+        ...Array.from({ length: 4 }, (_, i) => part(UNIT.slab, shadeHex(b.body, 0.75), {
+          y: bodyY + 0.22, z: 0.34 - i * 0.24, sx: 0.5 - i * 0.04, sy: 0.05, sz: 0.2, ...wet,
         })),
-        // small forelimbs with hooks
-        part(B, b.body, { x: 0.22, y: bodyY - 0.28, z: 0.4, rx: 0.5, sx: 0.09, sy: 0.42, sz: 0.09 }),
-        part(B, b.body, { x: -0.22, y: bodyY - 0.28, z: 0.4, rx: 0.5, sx: 0.09, sy: 0.42, sz: 0.09 }),
+        // Underside is paler and segmented.
+        ...Array.from({ length: 5 }, (_, i) => part(UNIT.slab, shadeHex(b.body, 1.5), {
+          y: bodyY - 0.26, z: 0.32 - i * 0.2, sx: 0.38, sy: 0.06, sz: 0.16, ...wet,
+        })),
+        // Head: flat, wide, mouth along the underside, no forehead to speak of.
+        part(UNIT.wedge, b.head, { y: bodyY + 0.06, z: 0.78, ry: Math.PI / 2, rz: Math.PI, sx: 0.5, sy: 0.28, sz: 0.46, ...wet }),
+        part(UNIT.bevelBox, b.head, { y: bodyY + 0.1, z: 0.66, sx: 0.44, sy: 0.3, sz: 0.34, ...wet }),
+        part(UNIT.bevelBox, shadeHex(b.head, 1.3), { y: bodyY - 0.04, z: 0.82, rx: -0.18, sx: 0.34, sy: 0.12, sz: 0.36, ...wet }),
+        ...Array.from({ length: 10 }, (_, i) => part(UNIT.cone, claw, {
+          x: -0.14 + (i % 5) * 0.07, y: bodyY + (i < 5 ? 0.04 : -0.06), z: 0.94,
+          rx: i < 5 ? Math.PI : 0, sx: 0.05, sy: 0.14, sz: 0.05,
+        })),
+        // Four eyes in two pairs, and the ridge over them.
+        ...[1, -1].flatMap((sg) => [
+          emit(UNIT.lowSphere, b.eye, { x: sg * 0.15, y: bodyY + 0.2, z: 0.82, sx: 0.13, sy: 0.13, sz: 0.09 }),
+          emit(UNIT.lowSphere, b.eye, { x: sg * 0.25, y: bodyY + 0.14, z: 0.76, sx: 0.09, sy: 0.09, sz: 0.07 }),
+          part(UNIT.wedge, shadeHex(b.head, 0.7), { x: sg * 0.2, y: bodyY + 0.28, z: 0.78, rz: sg * 1.5, sx: 0.24, sy: 0.1, sz: 0.24, ...wet }),
+        ]),
+        // Tail: tapering, kinked, with a barb.
+        ...Array.from({ length: 5 }, (_, i) => part(UNIT.capsule, b.body, {
+          y: bodyY + 0.08 + i * 0.05, z: -0.66 - i * 0.26, rx: Math.PI / 2 - i * 0.12,
+          sx: 0.2 - i * 0.03, sy: 0.3, sz: 0.2 - i * 0.03, ...wet,
+        })),
+        part(UNIT.cone, claw, { y: bodyY + 0.36, z: -1.86, rx: -1.9, sx: 0.13, sy: 0.34, sz: 0.13 }),
       ],
-      // powerful folded hind legs
-      legL: [part(B, b.body, { x: 0.28, y: -0.16, z: -0.3, rx: -0.6, sx: 0.17, sy: 0.5, sz: 0.17 }),
-        part(B, b.body, { x: 0.28, y: -0.4, z: -0.06, rx: 0.55, sx: 0.14, sy: 0.46, sz: 0.14 })],
-      legR: [part(B, b.body, { x: -0.28, y: -0.16, z: -0.3, rx: -0.6, sx: 0.17, sy: 0.5, sz: 0.17 }),
-        part(B, b.body, { x: -0.28, y: -0.4, z: -0.06, rx: 0.55, sx: 0.14, sy: 0.46, sz: 0.14 })],
+      // Front legs: slim, reaching forward. Back legs: coiled and massive.
+      legL: [
+        part(UNIT.capsule, b.body, { x: 0.28, y: -0.1, z: 0.42, rx: 0.4, sx: 0.16, sy: 0.4, sz: 0.16, ...wet }),
+        part(UNIT.capsule, b.body, { x: 0.28, y: -0.34, z: 0.52, rx: -0.3, sx: 0.13, sy: 0.36, sz: 0.13, ...wet }),
+        part(UNIT.wedge, shadeHex(b.body, 0.7), { x: 0.28, y: -0.5, z: 0.62, ry: Math.PI / 2, sx: 0.16, sy: 0.1, sz: 0.26, ...wet }),
+        ...[0, 1, 2].map((i) => part(UNIT.cone, claw, {
+          x: 0.28 + (i - 1) * 0.06, y: -0.54, z: 0.76, rx: 1.5, sx: 0.04, sy: 0.13, sz: 0.04,
+        })),
+        // Rear haunch on the same side, folded.
+        part(UNIT.lowSphere, b.body, { x: 0.3, y: -0.02, z: -0.44, sx: 0.42, sy: 0.44, sz: 0.4, ...wet }),
+        part(UNIT.capsule, b.body, { x: 0.32, y: -0.24, z: -0.3, rx: -0.9, sx: 0.17, sy: 0.42, sz: 0.17, ...wet }),
+        part(UNIT.wedge, shadeHex(b.body, 0.7), { x: 0.32, y: -0.5, z: -0.28, ry: Math.PI / 2, sx: 0.18, sy: 0.12, sz: 0.32, ...wet }),
+      ],
+      legR: [
+        part(UNIT.capsule, b.body, { x: -0.28, y: -0.1, z: 0.42, rx: 0.4, sx: 0.16, sy: 0.4, sz: 0.16, ...wet }),
+        part(UNIT.capsule, b.body, { x: -0.28, y: -0.34, z: 0.52, rx: -0.3, sx: 0.13, sy: 0.36, sz: 0.13, ...wet }),
+        part(UNIT.wedge, shadeHex(b.body, 0.7), { x: -0.28, y: -0.5, z: 0.62, ry: Math.PI / 2, sx: 0.16, sy: 0.1, sz: 0.26, ...wet }),
+        ...[0, 1, 2].map((i) => part(UNIT.cone, claw, {
+          x: -0.28 + (i - 1) * 0.06, y: -0.54, z: 0.76, rx: 1.5, sx: 0.04, sy: 0.13, sz: 0.04,
+        })),
+        part(UNIT.lowSphere, b.body, { x: -0.3, y: -0.02, z: -0.44, sx: 0.42, sy: 0.44, sz: 0.4, ...wet }),
+        part(UNIT.capsule, b.body, { x: -0.32, y: -0.24, z: -0.3, rx: -0.9, sx: 0.17, sy: 0.42, sz: 0.17, ...wet }),
+        part(UNIT.wedge, shadeHex(b.body, 0.7), { x: -0.32, y: -0.5, z: -0.28, ry: Math.PI / 2, sx: 0.18, sy: 0.12, sz: 0.32, ...wet }),
+      ],
     };
   },
 
   spitter(b, h) {
     const legH = h * 0.3;
     const headY = h * 0.78;
+    const wet = { metal: 0.16, rough: 0.28, smooth: true };
+    const gum = 0x7a2a3a;
+    // Mostly mouth. The gullet sac swells before it fires, the jaw hinges past
+    // where a jaw should stop, and the whole thing is built around presenting
+    // that opening at you.
     return {
-      pivot: legH, headY, headR: 0.34, wobble: 0.6,
+      pivot: legH, headY, headR: 0.3, wobble: 0.6,
       upper: [
-        part(S, b.body, { y: h * 0.46, rx: 0.24, sx: 0.85, sy: 0.8, sz: 0.95 }),
-        // back nodules
-        ...[0, 1, 2].map((i) => part(S, shadeHex(b.body, 1.3), {
-          x: (i - 1) * 0.24, y: h * 0.62, z: -0.3, sx: 0.28, sy: 0.28, sz: 0.28,
+        // Gullet: a pressurised bag under the head, visibly full.
+        part(UNIT.lowSphere, shadeHex(b.body, 1.25), { y: h * 0.42, z: 0.14, sx: 1.05, sy: 0.95, sz: 1.0, ...wet }),
+        ...Array.from({ length: 5 }, (_, i) => part(UNIT.pipe, shadeHex(b.body, 0.85), {
+          y: h * (0.28 + i * 0.08), z: 0.14, sx: 1.02 - Math.abs(i - 2) * 0.08, sy: 0.1, sz: 1.0 - Math.abs(i - 2) * 0.08, ...wet,
         })),
-        // sagging sac head with a wide maw
-        part(S, b.head, { y: headY, sx: 0.72, sy: 0.62, sz: 0.68 }),
-        part(S, shadeHex(b.head, 0.8), { y: headY - 0.2, z: 0.12, sx: 0.6, sy: 0.4, sz: 0.55 }),
-        part(B, 0x121808, { y: headY - 0.12, z: 0.3, rx: 0.3, sx: 0.44, sy: 0.2, sz: 0.14 }),
-        ...[0, 1, 2, 3].map((i) => part(CN, 0xe8f4c0, {
-          x: (i - 1.5) * 0.11, y: headY - 0.2, z: 0.34, rx: Math.PI, sx: 0.05, sy: 0.12, sz: 0.05,
+        emit(UNIT.lowSphere, b.eye, { y: h * 0.4, z: 0.6, sx: 0.5, sy: 0.44, sz: 0.2, opacity: 0.55 }),
+        // Shoulders/back, hunched over the sac.
+        part(UNIT.lowSphere, b.body, { y: h * 0.66, z: -0.16, sx: 0.95, sy: 0.7, sz: 0.85, ...wet }),
+        ...Array.from({ length: 5 }, (_, i) => part(UNIT.cone, shadeHex(b.body, 0.7), {
+          x: (i - 2) * 0.17, y: h * 0.82, z: -0.3, rx: -0.5, sx: 0.13, sy: 0.26, sz: 0.13, ...wet,
         })),
-        emit(S, b.eye, { x: 0.2, y: headY + 0.14, z: 0.28, sx: 0.12, sy: 0.12, sz: 0.08 }),
-        emit(S, b.eye, { x: -0.2, y: headY + 0.14, z: 0.28, sx: 0.12, sy: 0.12, sz: 0.08 }),
-        // drips
-        emit(S, b.head, { y: headY - 0.34, z: 0.26, sx: 0.09, sy: 0.16, sz: 0.09, opacity: 0.8 }),
-        // thin arms
-        part(C, b.body, { x: 0.5, y: h * 0.42, rz: 0.5, sx: 0.12, sy: 0.7, sz: 0.12 }),
-        part(C, b.body, { x: -0.5, y: h * 0.42, rz: -0.5, sx: 0.12, sy: 0.7, sz: 0.12 }),
+        // Head: hinged jaw, wide open, ringed with teeth.
+        part(UNIT.lowSphere, b.head, { y: headY, sx: 0.78, sy: 0.66, sz: 0.72, ...wet }),
+        part(UNIT.wedge, b.head, { y: headY + 0.14, z: 0.3, ry: Math.PI / 2, rz: Math.PI, sx: 0.6, sy: 0.24, sz: 0.4, ...wet }),
+        part(UNIT.wedge, shadeHex(b.head, 1.2), { y: headY - 0.22, z: 0.28, ry: Math.PI / 2, sx: 0.56, sy: 0.22, sz: 0.4, ...wet }),
+        part(UNIT.lowSphere, gum, { y: headY - 0.03, z: 0.24, sx: 0.52, sy: 0.4, sz: 0.34, ...wet }),
+        ...Array.from({ length: 14 }, (_, i) => {
+          const upper = i < 7;
+          const j = upper ? i : i - 7;
+          return part(UNIT.cone, 0xf2ead6, {
+            x: (j - 3) * 0.08, y: headY + (upper ? 0.06 : -0.14), z: 0.42,
+            rx: upper ? Math.PI : 0, sx: 0.05, sy: 0.15 - Math.abs(j - 3) * 0.015, sz: 0.05,
+          });
+        }),
+        // Jaw hinge, exposed on both sides.
+        ...[1, -1].map((sg) => part(UNIT.lowCyl, shadeHex(b.head, 0.6), {
+          x: sg * 0.34, y: headY - 0.06, z: 0.06, rz: Math.PI / 2, sx: 0.18, sy: 0.1, sz: 0.18, ...wet,
+        })),
+        // Eyes: small, set far back, almost an afterthought.
+        ...[1, -1].map((sg) => emit(UNIT.lowSphere, b.eye, {
+          x: sg * 0.24, y: headY + 0.24, z: 0.14, sx: 0.13, sy: 0.13, sz: 0.1,
+        })),
+        ...[1, -1].map((sg) => part(UNIT.wedge, shadeHex(b.head, 0.65), {
+          x: sg * 0.24, y: headY + 0.34, z: 0.14, rz: sg * 1.5, sx: 0.22, sy: 0.1, sz: 0.22, ...wet,
+        })),
+        // Drool, mid-fall.
+        ...[0, 1, 2].map((i) => emit(C, b.eye, {
+          x: -0.14 + i * 0.14, y: headY - 0.34 - (i % 2) * 0.12, z: 0.34,
+          sx: 0.035, sy: 0.22 + (i % 2) * 0.12, sz: 0.035, opacity: 0.6,
+        })),
+        // Short arms braced on the ground in front.
+        ...[1, -1].flatMap((sg) => [
+          part(UNIT.capsule, b.body, { x: sg * 0.6, y: h * 0.44, z: 0.16, rz: sg * 0.5, rx: 0.5, sx: 0.19, sy: 0.42, sz: 0.19, ...wet }),
+          part(UNIT.capsule, b.body, { x: sg * 0.72, y: h * 0.18, z: 0.42, rx: 0.6, sx: 0.16, sy: 0.38, sz: 0.16, ...wet }),
+          ...[0, 1, 2].map((i) => part(UNIT.cone, 0xf2ead6, {
+            x: sg * (0.7 + (i - 1) * 0.08), y: 0.06, z: 0.6, rx: 1.5, sx: 0.05, sy: 0.16, sz: 0.05,
+          })),
+        ]),
       ],
-      legL: [part(C, b.body, { x: 0.24, y: -legH / 2, sx: 0.2, sy: legH, sz: 0.2 })],
-      legR: [part(C, b.body, { x: -0.24, y: -legH / 2, sx: 0.2, sy: legH, sz: 0.2 })],
+      legL: [
+        part(UNIT.capsule, b.body, { x: 0.3, y: -legH * 0.42, z: -0.06, rx: -0.3, sx: 0.24, sy: legH * 0.6, sz: 0.24, ...wet }),
+        part(UNIT.wedge, shadeHex(b.body, 0.7), { x: 0.3, y: -legH + 0.06, z: 0.1, ry: Math.PI / 2, sx: 0.26, sy: 0.13, sz: 0.4, ...wet }),
+      ],
+      legR: [
+        part(UNIT.capsule, b.body, { x: -0.3, y: -legH * 0.42, z: -0.06, rx: -0.3, sx: 0.24, sy: legH * 0.6, sz: 0.24, ...wet }),
+        part(UNIT.wedge, shadeHex(b.body, 0.7), { x: -0.3, y: -legH + 0.06, z: 0.1, ry: Math.PI / 2, sx: 0.26, sy: 0.13, sz: 0.4, ...wet }),
+      ],
     };
   },
 
   brute(b, h) {
     const legH = h * 0.34, torso = h * 0.4;
     const headY = legH + torso * 1.02;
+    const iron = 0x5a4a3c, bone = 0xe8dcc0;
+    const meat = { metal: 0.0, rough: 0.72, smooth: true };
+    const plate = { metal: 0.6, rough: 0.5 };
+    // Asymmetric on purpose: one arm has been grown into a weapon and the
+    // other has withered. Everything is wedge-shaped and top-heavy, so the
+    // silhouette leans at you even standing still.
     return {
       pivot: legH, headY, headR: 0.26,
       upper: [
-        // narrower ribcage than the shoulders, so the frame reads as a wedge
-        part(B, b.body, { y: legH + torso * 0.46, rx: 0.16, sx: 0.95, sy: torso * 0.92, sz: 0.72 }),
-        part(B, shadeHex(b.body, 0.55), { y: legH + torso * 0.5, z: 0.38, rx: 0.16, sx: 0.72, sy: torso * 0.6, sz: 0.14 }),
-        // bolted chest plate with exposed muscle either side
-        ...[0, 1, 2].map((i) => part(B, shadeHex(b.head, 1.15), {
-          y: legH + torso * (0.28 + i * 0.22), z: 0.44, rx: 0.16, sx: 0.66 - i * 0.08, sy: 0.07, sz: 0.05,
+        // Ribcage narrower than the shoulders — the frame is a wedge.
+        part(UNIT.capsule, b.body, { y: legH + torso * 0.46, rx: 0.16, sx: 0.95, sy: torso * 0.5, sz: 0.74, ...meat }),
+        part(UNIT.wedge, b.body, { y: legH + torso * 0.86, z: -0.06, ry: Math.PI, sx: 1.05, sy: 0.36, sz: 0.6, ...meat }),
+        // Ribs pushing through, and a slab of bolted plate over the sternum.
+        ...Array.from({ length: 5 }, (_, i) => part(C, shadeHex(b.head, 1.1), {
+          x: (i % 2 ? 1 : -1) * 0.3, y: legH + torso * (0.3 + Math.floor(i / 2) * 0.16), z: 0.32,
+          rz: (i % 2 ? 1 : -1) * 0.9, sx: 0.06, sy: 0.42, sz: 0.06, ...meat,
         })),
-        // slabs of shoulder that frame the head instead of burying it
-        ...[1, -1].map((sgn) => part(B, b.head, {
-          x: sgn * 0.72, y: legH + torso * 0.9, rz: sgn * -0.34, sx: 0.5, sy: 0.34, sz: 0.62,
+        part(UNIT.bevelBox, iron, { y: legH + torso * 0.52, z: 0.4, rx: 0.16, sx: 0.62, sy: torso * 0.55, sz: 0.1, ...plate }),
+        ...Array.from({ length: 6 }, (_, i) => part(UNIT.hex, 0x9aa0aa, {
+          x: -0.24 + (i % 2) * 0.48, y: legH + torso * (0.3 + Math.floor(i / 2) * 0.22), z: 0.46,
+          rx: Math.PI / 2, sx: 0.09, sy: 0.05, sz: 0.09, metal: 0.9, rough: 0.3,
         })),
-        ...[1, -1].flatMap((sgn) => [0, 1].map((i) => part(CN, shadeHex(b.head, 1.3), {
-          x: sgn * (0.6 + i * 0.22), y: legH + torso * 1.06, z: (i - 0.5) * 0.3,
-          rz: sgn * -0.5, sx: 0.16, sy: 0.36, sz: 0.16,
-        }))),
-        // head, clear of the shoulders and lit
-        part(S, b.head, { y: headY, z: 0.16, sx: 0.5, sy: 0.46, sz: 0.48 }),
-        part(B, 0x24140e, { y: headY - 0.12, z: 0.36, sx: 0.34, sy: 0.14, sz: 0.1 }),
-        ...[0, 1, 2, 3].map((i) => part(CN, 0xe8dcc0, {
-          x: (i - 1.5) * 0.09, y: headY - 0.14, z: 0.4, rx: Math.PI, sx: 0.05, sy: 0.1, sz: 0.05,
+        // Shoulder slabs framing the head, spiked.
+        ...[1, -1].flatMap((sg) => [
+          part(UNIT.bevelBox, b.head, { x: sg * 0.72, y: legH + torso * 0.9, rz: sg * -0.34, sx: 0.5, sy: 0.36, sz: 0.64, ...meat }),
+          part(UNIT.slab, iron, { x: sg * 0.74, y: legH + torso * 1.02, rz: sg * -0.34, sx: 0.52, sy: 0.08, sz: 0.62, ...plate }),
+          ...[0, 1, 2].map((i) => part(UNIT.cone, bone, {
+            x: sg * (0.56 + i * 0.2), y: legH + torso * 1.08, z: (i - 1) * 0.24,
+            rz: sg * -0.45, sx: 0.15 - i * 0.02, sy: 0.38 - i * 0.05, sz: 0.15 - i * 0.02,
+          })),
+        ]),
+        // Head: low-set, heavy brow, tusked underbite, chained jaw.
+        part(UNIT.lowSphere, b.head, { y: headY, z: 0.16, sx: 0.5, sy: 0.46, sz: 0.5, ...meat }),
+        part(UNIT.wedge, shadeHex(b.head, 0.75), { y: headY + 0.16, z: 0.3, rz: Math.PI / 2, ry: Math.PI / 2, sx: 0.3, sy: 0.14, sz: 0.48, ...meat }),
+        part(UNIT.bevelBox, 0x24140e, { y: headY - 0.13, z: 0.36, sx: 0.36, sy: 0.16, sz: 0.14 }),
+        ...[0, 1, 2, 3].map((i) => part(UNIT.cone, bone, {
+          x: (i - 1.5) * 0.09, y: headY - 0.15, z: 0.4, rx: Math.PI, sx: 0.05, sy: 0.11, sz: 0.05,
         })),
-        emit(S, b.eye, { x: 0.15, y: headY + 0.06, z: 0.36, sx: 0.11, sy: 0.09, sz: 0.07 }),
-        emit(S, b.eye, { x: -0.15, y: headY + 0.06, z: 0.36, sx: 0.11, sy: 0.09, sz: 0.07 }),
-        // the arm: dropped low, thick, ending in a fist bigger than its head
-        part(B, b.body, { x: 0.98, y: legH + torso * 0.66, rz: 0.22, sx: 0.44, sy: torso * 0.6, sz: 0.44 }),
-        part(B, shadeHex(b.body, 1.15), { x: 1.14, y: legH + torso * 0.16, rz: 0.12, sx: 0.52, sy: torso * 0.62, sz: 0.52 }),
-        part(S, b.head, { x: 1.2, y: legH - 0.16, sx: 0.86, sy: 0.76, sz: 0.86 }),
-        ...[0, 1, 2].map((i) => part(CN, shadeHex(b.head, 1.35), {
-          x: 1.2 + (i - 1) * 0.22, y: legH - 0.34, z: 0.3, rx: 1.4, sx: 0.14, sy: 0.3, sz: 0.14,
+        ...[1, -1].map((sg) => part(UNIT.cone, bone, {
+          x: sg * 0.22, y: headY - 0.16, z: 0.32, rx: -0.25, rz: sg * 0.2, sx: 0.09, sy: 0.34, sz: 0.09,
         })),
-        // the other arm is almost vestigial
-        part(B, b.body, { x: -0.64, y: legH + torso * 0.56, rz: -0.26, sx: 0.22, sy: torso * 0.72, sz: 0.22 }),
-        part(S, b.head, { x: -0.76, y: legH + torso * 0.16, sx: 0.3, sy: 0.28, sz: 0.3 }),
+        ...[1, -1].map((sg) => emit(UNIT.lowSphere, b.eye, {
+          x: sg * 0.15, y: headY + 0.05, z: 0.36, sx: 0.12, sy: 0.09, sz: 0.08,
+        })),
+        // Iron collar with a broken chain still hanging off it.
+        part(UNIT.pipe, iron, { y: legH + torso * 0.98, z: 0.1, sx: 0.62, sy: 0.16, sz: 0.6, ...plate }),
+        ...Array.from({ length: 4 }, (_, i) => part(UNIT.ring, 0x8a8f96, {
+          x: 0.28, y: legH + torso * 0.86 - i * 0.16, z: 0.28 + i * 0.04, rx: Math.PI / 2, ry: i * 1.1,
+          sx: 0.15, sy: 0.15, sz: 0.15, metal: 0.9, rough: 0.35,
+        })),
+        // The arm: dropped low, thick, ending in a fist bigger than its head.
+        part(UNIT.capsule, b.body, { x: 0.98, y: legH + torso * 0.66, rz: 0.22, sx: 0.42, sy: torso * 0.34, sz: 0.42, ...meat }),
+        part(UNIT.lowSphere, b.head, { x: 1.06, y: legH + torso * 0.42, sx: 0.44, sy: 0.44, sz: 0.44, ...meat }),
+        part(UNIT.capsule, shadeHex(b.body, 1.15), { x: 1.14, y: legH + torso * 0.16, rz: 0.12, sx: 0.5, sy: torso * 0.34, sz: 0.5, ...meat }),
+        part(UNIT.lowSphere, b.head, { x: 1.2, y: legH - 0.16, sx: 0.88, sy: 0.78, sz: 0.88, ...meat }),
+        ...[0, 1, 2].map((i) => part(UNIT.capsule, shadeHex(b.head, 1.1), {
+          x: 1.2 + (i - 1) * 0.24, y: legH - 0.3, z: 0.22, rx: 1.2, sx: 0.2, sy: 0.28, sz: 0.2, ...meat,
+        })),
+        ...[0, 1, 2].map((i) => part(UNIT.cone, bone, {
+          x: 1.2 + (i - 1) * 0.24, y: legH - 0.42, z: 0.42, rx: 1.4, sx: 0.13, sy: 0.28, sz: 0.13,
+        })),
+        // Wrappings around the big forearm, stained.
+        ...Array.from({ length: 4 }, (_, i) => part(UNIT.pipe, 0x7a6a54, {
+          x: 1.12 + i * 0.02, y: legH + torso * (0.3 - i * 0.08), rz: 0.12, sx: 0.54, sy: 0.1, sz: 0.54, rough: 0.85,
+        })),
+        // The other arm is almost vestigial, and strapped to the chest.
+        part(UNIT.capsule, b.body, { x: -0.64, y: legH + torso * 0.56, rz: -0.26, sx: 0.2, sy: torso * 0.4, sz: 0.2, ...meat }),
+        part(UNIT.capsule, b.body, { x: -0.6, y: legH + torso * 0.26, z: 0.16, rx: -0.8, sx: 0.17, sy: torso * 0.3, sz: 0.17, ...meat }),
+        part(UNIT.lowSphere, b.head, { x: -0.56, y: legH + torso * 0.2, z: 0.36, sx: 0.28, sy: 0.26, sz: 0.28, ...meat }),
+        part(UNIT.slab, 0x7a6a54, { x: -0.5, y: legH + torso * 0.42, z: 0.2, rz: -0.4, sx: 0.5, sy: 0.09, sz: 0.5, rough: 0.85 }),
       ],
-      legL: [part(B, b.body, { x: 0.34, y: -legH * 0.5, sx: 0.36, sy: legH, sz: 0.4 }),
-        part(B, b.head, { x: 0.34, y: -legH + 0.09, z: 0.12, sx: 0.42, sy: 0.18, sz: 0.62 })],
-      legR: [part(B, b.body, { x: -0.34, y: -legH * 0.5, sx: 0.36, sy: legH, sz: 0.4 }),
-        part(B, b.head, { x: -0.34, y: -legH + 0.09, z: 0.12, sx: 0.42, sy: 0.18, sz: 0.62 })],
+      legL: [
+        part(UNIT.capsule, b.body, { x: 0.34, y: -legH * 0.3, sx: 0.36, sy: legH * 0.44, sz: 0.4, ...meat }),
+        part(UNIT.lowSphere, b.head, { x: 0.34, y: -legH * 0.54, sx: 0.38, sy: 0.36, sz: 0.4, ...meat }),
+        part(UNIT.capsule, b.body, { x: 0.34, y: -legH * 0.78, sx: 0.3, sy: legH * 0.36, sz: 0.34, ...meat }),
+        part(UNIT.bevelBox, b.head, { x: 0.34, y: -legH + 0.09, z: 0.12, sx: 0.44, sy: 0.2, sz: 0.64, ...meat }),
+        ...[0, 1, 2].map((i) => part(UNIT.cone, bone, {
+          x: 0.34 + (i - 1) * 0.13, y: -legH + 0.05, z: 0.42, rx: 1.5, sx: 0.07, sy: 0.16, sz: 0.07,
+        })),
+      ],
+      legR: [
+        part(UNIT.capsule, b.body, { x: -0.34, y: -legH * 0.3, sx: 0.36, sy: legH * 0.44, sz: 0.4, ...meat }),
+        part(UNIT.lowSphere, b.head, { x: -0.34, y: -legH * 0.54, sx: 0.38, sy: 0.36, sz: 0.4, ...meat }),
+        part(UNIT.capsule, b.body, { x: -0.34, y: -legH * 0.78, sx: 0.3, sy: legH * 0.36, sz: 0.34, ...meat }),
+        part(UNIT.bevelBox, b.head, { x: -0.34, y: -legH + 0.09, z: 0.12, sx: 0.44, sy: 0.2, sz: 0.64, ...meat }),
+        ...[0, 1, 2].map((i) => part(UNIT.cone, bone, {
+          x: -0.34 + (i - 1) * 0.13, y: -legH + 0.05, z: 0.42, rx: 1.5, sx: 0.07, sy: 0.16, sz: 0.07,
+        })),
+        // A length of chain dragging from the ankle.
+        ...Array.from({ length: 5 }, (_, i) => part(UNIT.ring, 0x8a8f96, {
+          x: -0.36, y: -legH + 0.06, z: -0.2 - i * 0.16, rx: Math.PI / 2, ry: i * 1.1,
+          sx: 0.14, sy: 0.14, sz: 0.14, metal: 0.9, rough: 0.4,
+        })),
+      ],
     };
   },
 
@@ -825,7 +1028,26 @@ export function buildEnemyMesh(type) {
   const fam = type.family;
 
   const rig = new THREE.Group();
-  const upper = assemble(surfaced(spec.upper, fam, b.chrome));
+
+  // Split the head out of the upper body so it can be aimed independently.
+  // Doing it here rather than in every builder means each model declares its
+  // head once — as the volume the headshot test already uses — and gets neck
+  // articulation for free. A crowd whose heads all turn to watch you is the
+  // single cheapest thing that stops enemies reading as furniture.
+  const headParts = [], bodyParts = [];
+  const hY = spec.headY ?? 0, hR = spec.headR ?? 0.2;
+  for (const q of spec.upper) {
+    const py = q.y ?? 0, px = q.x ?? 0;
+    const inHead = py >= hY - hR * 1.7 && Math.abs(px) <= hR * 4.5;
+    if (inHead) headParts.push({ ...q, y: py - hY });
+    else bodyParts.push(q);
+  }
+  // If the split found nothing (or swallowed the whole model), don't use it.
+  const useHead = headParts.length > 0 && bodyParts.length > 0;
+
+  const upper = assemble(surfaced(useHead ? bodyParts : spec.upper, fam, b.chrome));
+  const head = useHead ? assemble(surfaced(headParts, fam, b.chrome)) : null;
+  if (head) { head.position.y = hY; upper.add(head); }
   const legL = assemble(surfaced(spec.legL || [], fam, b.chrome));
   const legR = assemble(surfaced(spec.legR || [], fam, b.chrome));
   legL.position.y = spec.pivot;
@@ -845,6 +1067,7 @@ export function buildEnemyMesh(type) {
   if (!spec.flying) rig.add(blobShadow(Math.max(0.35, type.radius * 1.5)));
 
   rig.userData.upper = upper;
+  rig.userData.head = head;
   rig.userData.legL = legL;
   rig.userData.legR = legR;
   rig.userData.legPivot = spec.pivot;
@@ -869,41 +1092,99 @@ export function buildEnemyMesh(type) {
 const BOSS_BUILDERS = {
 
   crookking(b, h) {
+    // A queue-management process that built itself a throne out of the sorting
+    // floor and started calling itself a king. Everything he wears was taken
+    // from somewhere else and welded on: mismatched plate, other people's
+    // badges, a crown repaired so many times it is mostly solder.
+    const rust = 0x6a4a30, brass = 0xb08a3a, steel = 0x8d939c;
+    const scrap = { metal: 0.75, rough: 0.55 };
+    const gold = { metal: 1.0, rough: 0.28 };
+    const cloth = { metal: 0.0, rough: 0.88 };
     return [
-      // welded junk throne worn as armour
-      part(B, b.body, { y: h * 0.44, sx: 2.1, sy: h * 0.46, sz: 1.15 }),
-      part(B, shadeHex(b.body, 0.7), { y: h * 0.46, z: -0.7, sx: 2.5, sy: h * 0.62, sz: 0.3 }),
-      ...[0, 1, 2, 3, 4].map((i) => part(B, shadeHex(b.body, 0.6), {
-        x: (i - 2) * 0.55, y: h * (0.78 + (i % 2) * 0.09), z: -0.72,
-        rz: (i - 2) * 0.12, sx: 0.34, sy: 0.7, sz: 0.24,
+      // Torso: a strongbox with a hatch, not a chest.
+      part(UNIT.bevelBox, b.body, { y: h * 0.46, sx: 2.05, sy: h * 0.46, sz: 1.15, ...scrap }),
+      part(UNIT.bevelBox, shadeHex(b.body, 0.8), { y: h * 0.5, z: 0.56, sx: 1.5, sy: h * 0.32, sz: 0.14, ...scrap }),
+      ...Array.from({ length: 8 }, (_, i) => part(UNIT.hex, steel, {
+        x: -0.62 + (i % 4) * 0.42, y: h * (0.36 + Math.floor(i / 4) * 0.26), z: 0.64,
+        rx: Math.PI / 2, sx: 0.14, sy: 0.07, sz: 0.14, metal: 0.95, rough: 0.3,
       })),
-      part(B, b.body, { y: h * 0.16, sx: 1.6, sy: h * 0.3, sz: 1.0 }),
-      // chest of scavenged "medals"
-      part(B, shadeHex(b.body, 1.3), { y: h * 0.5, z: 0.6, sx: 1.5, sy: h * 0.3, sz: 0.1 }),
-      ...[0, 1, 2, 3].map((i) => emit(IC, b.accent, {
-        x: -0.5 + i * 0.34, y: h * (0.42 + (i % 2) * 0.12), z: 0.68, sx: 0.2, sy: 0.2, sz: 0.14,
+      // Mismatched plates riveted over the shoulders and flanks.
+      ...Array.from({ length: 6 }, (_, i) => part(UNIT.slab, i % 2 ? rust : shadeHex(b.body, 1.2), {
+        x: -0.9 + (i % 3) * 0.9, y: h * (0.34 + Math.floor(i / 3) * 0.3), z: 0.58,
+        rz: (i - 2.5) * 0.09, sx: 0.7, sy: 0.34, sz: 0.08, ...scrap,
       })),
-      // hunched head with slot eyes
-      part(S, shadeHex(b.body, 0.75), { y: h * 0.78, z: 0.12, sx: 1.05, sy: 1.0, sz: 1.0 }),
-      part(B, 0x0d1116, { y: h * 0.78, z: 0.58, sx: 0.72, sy: 0.24, sz: 0.1 }),
-      emit(B, b.eye, { x: 0.2, y: h * 0.78, z: 0.62, sx: 0.22, sy: 0.09, sz: 0.03 }),
-      emit(B, b.eye, { x: -0.2, y: h * 0.78, z: 0.62, sx: 0.22, sy: 0.09, sz: 0.03 }),
-      // a crown that has been repaired too many times
-      part(C, b.accent, { y: h * 0.99, sx: 1.15, sy: 0.24, sz: 1.15 }),
-      ...[0, 1, 2, 3, 4, 5].map((i) => part(CN, b.accent, {
-        x: Math.cos(i * 1.047) * 0.52, y: h * (1.09 + (i % 2) * 0.04), z: Math.sin(i * 1.047) * 0.52,
-        rz: (i % 3 - 1) * 0.24, sx: 0.24, sy: 0.5 + (i % 2) * 0.18, sz: 0.24,
+      // Chest of scavenged "medals" — other people's session badges.
+      ...Array.from({ length: 7 }, (_, i) => part(UNIT.disc, brass, {
+        x: -0.6 + i * 0.2, y: h * (0.4 + (i % 3) * 0.07), z: 0.66, rx: Math.PI / 2,
+        sx: 0.17, sy: 0.03, sz: 0.17, ...gold,
       })),
-      // arms; one holds a pipe sceptre
-      part(B, b.body, { x: 1.28, y: h * 0.5, rz: 0.22, sx: 0.44, sy: h * 0.44, sz: 0.44 }),
-      part(B, b.body, { x: -1.3, y: h * 0.46, rz: -0.3, sx: 0.42, sy: h * 0.44, sz: 0.42 }),
-      part(C, shadeHex(b.body, 0.5), { x: 1.5, y: h * 0.62, rz: 0.12, sx: 0.16, sy: h * 1.0, sz: 0.16 }),
-      emit(IC, b.accent, { x: 1.62, y: h * 1.1, sx: 0.42, sy: 0.5, sz: 0.42 }),
-      part(S, shadeHex(b.body, 1.2), { x: -1.42, y: h * 0.2, sx: 0.5, sy: 0.46, sz: 0.5 }),
-      // legs and a dragging cape
-      part(B, b.body, { x: 0.5, y: h * 0.1, sx: 0.46, sy: h * 0.22, sz: 0.46 }),
-      part(B, b.body, { x: -0.5, y: h * 0.1, sx: 0.46, sy: h * 0.22, sz: 0.46 }),
-      part(B, shadeHex(b.body, 0.55), { y: h * 0.34, z: -1.0, rx: 0.14, sx: 2.2, sy: h * 0.68, sz: 0.12 }),
+      ...Array.from({ length: 7 }, (_, i) => emit(UNIT.icosa, b.accent, {
+        x: -0.6 + i * 0.2, y: h * (0.4 + (i % 3) * 0.07), z: 0.7, sx: 0.1, sy: 0.1, sz: 0.06,
+      })),
+      // The throne, worn as a backpack: uprights, a canopy and a broken finial.
+      part(UNIT.bevelBox, shadeHex(b.body, 0.6), { y: h * 0.46, z: -0.72, sx: 2.5, sy: h * 0.66, sz: 0.3, ...scrap }),
+      ...Array.from({ length: 5 }, (_, i) => part(UNIT.bevelBox, shadeHex(b.body, 0.5), {
+        x: (i - 2) * 0.55, y: h * (0.86 + (i % 2) * 0.11), z: -0.76,
+        rz: (i - 2) * 0.11, sx: 0.3, sy: 0.8, sz: 0.24, ...scrap,
+      })),
+      ...Array.from({ length: 5 }, (_, i) => part(UNIT.cone, brass, {
+        x: (i - 2) * 0.55, y: h * (1.06 + (i % 2) * 0.11), z: -0.76,
+        rz: (i - 2) * 0.11, sx: 0.22, sy: 0.36, sz: 0.22, ...gold,
+      })),
+      part(UNIT.bevelBox, rust, { y: h * 1.12, z: -0.78, sx: 2.7, sy: 0.16, sz: 0.34, ...scrap }),
+      // Cape: layered, ragged along the bottom, dragging.
+      ...Array.from({ length: 4 }, (_, i) => part(UNIT.slab, shadeHex(b.body, 0.5 - i * 0.05), {
+        y: h * (0.4 - i * 0.05), z: -0.95 - i * 0.09, rx: 0.12 + i * 0.05,
+        sx: 2.2 - i * 0.2, sy: h * (0.7 + i * 0.06), sz: 0.1, ...cloth,
+      })),
+      ...Array.from({ length: 7 }, (_, i) => part(UNIT.wedge, shadeHex(b.body, 0.42), {
+        x: (i - 3) * 0.34, y: h * 0.06, z: -1.24, rx: 0.2, rz: Math.PI, ry: Math.PI / 2,
+        sx: 0.12, sy: 0.34 + (i % 3) * 0.16, sz: 0.3, ...cloth,
+      })),
+      // Head: hunched into the collar, letterbox eyes, a jaw of sorted junk.
+      part(UNIT.pipe, rust, { y: h * 0.68, z: 0.06, sx: 1.3, sy: 0.3, sz: 1.2, ...scrap }),
+      part(UNIT.lowSphere, shadeHex(b.body, 0.78), { y: h * 0.8, z: 0.12, sx: 1.05, sy: 1.0, sz: 1.0, ...scrap }),
+      part(UNIT.bevelBox, 0x0d1116, { y: h * 0.8, z: 0.56, sx: 0.78, sy: 0.26, sz: 0.12 }),
+      emit(B, b.eye, { x: 0.2, y: h * 0.8, z: 0.62, sx: 0.24, sy: 0.1, sz: 0.03 }),
+      emit(B, b.eye, { x: -0.2, y: h * 0.8, z: 0.62, sx: 0.24, sy: 0.1, sz: 0.03 }),
+      ...Array.from({ length: 6 }, (_, i) => part(UNIT.bevelBox, steel, {
+        x: -0.34 + i * 0.14, y: h * 0.68, z: 0.56, sx: 0.1, sy: 0.14, sz: 0.08, metal: 0.9, rough: 0.4,
+      })),
+      // Crown: uneven spikes, visible solder, one spike snapped off short.
+      part(UNIT.pipe, brass, { y: h * 1.0, sx: 1.18, sy: 0.26, sz: 1.18, ...gold }),
+      ...Array.from({ length: 7 }, (_, i) => {
+        const a2 = i * (Math.PI * 2 / 7);
+        const broken = i === 3;
+        return part(UNIT.cone, brass, {
+          x: Math.cos(a2) * 0.52, y: h * (1.1 + (i % 2) * 0.05), z: Math.sin(a2) * 0.52,
+          rz: (i % 3 - 1) * 0.22, sx: 0.24, sy: broken ? 0.18 : 0.5 + (i % 2) * 0.2, sz: 0.24, ...gold,
+        });
+      }),
+      ...Array.from({ length: 5 }, (_, i) => part(UNIT.lowSphere, 0x9a8a6a, {
+        x: Math.cos(i * 1.25) * 0.55, y: h * 1.02, z: Math.sin(i * 1.25) * 0.55,
+        sx: 0.13, sy: 0.09, sz: 0.13, metal: 0.7, rough: 0.65,
+      })),
+      emit(UNIT.icosa, b.accent, { y: h * 1.24, sx: 0.26, sy: 0.32, sz: 0.26 }),
+      // Arms: one holds a pipe sceptre with a socket head welded on.
+      part(UNIT.capsule, b.body, { x: 1.28, y: h * 0.54, rz: 0.22, sx: 0.42, sy: h * 0.24, sz: 0.42, ...scrap }),
+      part(UNIT.lowSphere, rust, { x: 1.36, y: h * 0.32, sx: 0.44, sy: 0.42, sz: 0.44, ...scrap }),
+      part(UNIT.capsule, b.body, { x: 1.44, y: h * 0.16, rz: 0.1, sx: 0.36, sy: h * 0.2, sz: 0.36, ...scrap }),
+      part(C, shadeHex(b.body, 0.5), { x: 1.5, y: h * 0.66, rz: 0.1, sx: 0.16, sy: h * 1.05, sz: 0.16, ...scrap }),
+      part(UNIT.pipe, brass, { x: 1.56, y: h * 1.08, sx: 0.36, sy: 0.24, sz: 0.36, ...gold }),
+      emit(UNIT.icosa, b.accent, { x: 1.58, y: h * 1.2, sx: 0.42, sy: 0.5, sz: 0.42 }),
+      ...Array.from({ length: 4 }, (_, i) => part(UNIT.ring, steel, {
+        x: 1.52, y: h * (0.3 + i * 0.18), rx: Math.PI / 2, sx: 0.22, sy: 0.22, sz: 0.22, metal: 0.9, rough: 0.4,
+      })),
+      part(UNIT.capsule, b.body, { x: -1.3, y: h * 0.5, rz: -0.3, sx: 0.4, sy: h * 0.24, sz: 0.4, ...scrap }),
+      part(UNIT.lowSphere, rust, { x: -1.4, y: h * 0.3, sx: 0.42, sy: 0.4, sz: 0.42, ...scrap }),
+      part(UNIT.capsule, b.body, { x: -1.46, y: h * 0.14, rz: -0.12, sx: 0.34, sy: h * 0.18, sz: 0.34, ...scrap }),
+      part(UNIT.lowSphere, shadeHex(b.body, 1.2), { x: -1.5, y: h * 0.0, sx: 0.5, sy: 0.46, sz: 0.5, ...scrap }),
+      // Legs: squat, plated, standing on a low plinth of welded scrap.
+      ...[1, -1].flatMap((sg) => [
+        part(UNIT.capsule, b.body, { x: sg * 0.5, y: h * 0.14, sx: 0.46, sy: h * 0.16, sz: 0.46, ...scrap }),
+        part(UNIT.bevelBox, rust, { x: sg * 0.5, y: h * 0.24, sx: 0.56, sy: 0.16, sz: 0.56, ...scrap }),
+        part(UNIT.bevelBox, shadeHex(b.body, 0.7), { x: sg * 0.5, y: 0.1, z: 0.1, sx: 0.6, sy: 0.2, sz: 0.9, ...scrap }),
+      ]),
     ];
   },
 
@@ -1053,73 +1334,148 @@ const BOSS_BUILDERS = {
   },
 
   texasvegas(b, h) {
+    // A cowboy assembled entirely out of casino. The hat is the silhouette,
+    // the coat is a lit sign, and every piece of trim is something the Strip
+    // would have hung over a door.
+    const leather = 0x2a1c16, chrome = 0xd8dce4, felt = 0x1a1a20;
+    const cloth = { metal: 0.0, rough: 0.86 };
+    const hide = { metal: 0.05, rough: 0.6 };
+    const shiny = { metal: 1.0, rough: 0.18 };
     return [
-      part(B, b.body, { y: h * 0.55, sx: 0.9, sy: h * 0.4, sz: 0.5 }),
-      // long coat with neon piping, open at the front
-      ...[1, -1].map((sgn) => part(B, shadeHex(b.body, 1.5), {
-        x: sgn * 0.44, y: h * 0.42, rz: sgn * 0.06, sx: 0.24, sy: h * 0.62, sz: 0.6,
-      })),
-      ...[1, -1].map((sgn) => emit(B, b.accent, {
-        x: sgn * 0.56, y: h * 0.42, z: 0.02, sx: 0.04, sy: h * 0.6, sz: 0.52,
-      })),
-      emit(B, b.accent, { y: h * 0.62, z: 0.27, sx: 0.62, sy: 0.06, sz: 0.02 }),
-      // belt buckle the size of a sign
-      part(B, 0x2a2a30, { y: h * 0.36, z: 0.24, sx: 0.9, sy: 0.16, sz: 0.1 }),
-      emit(B, b.eye, { y: h * 0.36, z: 0.3, sx: 0.4, sy: 0.26, sz: 0.03 }),
-      // face under an enormous hat
-      part(S, 0xe8c9a0, { y: h * 0.84, sx: 0.5, sy: 0.55, sz: 0.5 }),
-      part(B, 0x1a1a20, { y: h * 0.86, z: 0.22, sx: 0.42, sy: 0.1, sz: 0.06 }),
-      emit(B, b.eye, { y: h * 0.86, z: 0.25, sx: 0.36, sy: 0.05, sz: 0.02 }),
-      part(B, 0x6a4a3a, { y: h * 0.74, z: 0.22, sx: 0.3, sy: 0.08, sz: 0.06 }),
-      part(C, b.body, { y: h * 1.0, sx: 0.66, sy: 0.42, sz: 0.66 }),
-      part(C, b.body, { y: h * 0.92, sx: 2.0, sy: 0.08, sz: 1.7 }),
-      emit(B, b.accent, { y: h * 1.0, z: 0.3, sx: 0.5, sy: 0.05, sz: 0.02 }),
-      // two revolvers, held out
-      ...[1, -1].flatMap((sgn) => [
-        part(B, b.body, { x: sgn * 0.62, y: h * 0.56, z: 0.2, rx: -0.5, sx: 0.2, sy: h * 0.34, sz: 0.2 }),
-        part(B, 0xc9c9d2, { x: sgn * 0.66, y: h * 0.46, z: 0.6, sx: 0.12, sy: 0.14, sz: 0.6 }),
-        emit(S, b.eye, { x: sgn * 0.66, y: h * 0.46, z: 0.9, sx: 0.09, sy: 0.09, sz: 0.06 }),
+      // Body and the long coat, open at the front, piped in neon.
+      part(UNIT.bevelBox, b.body, { y: h * 0.55, sx: 0.88, sy: h * 0.4, sz: 0.5, ...cloth }),
+      ...[1, -1].flatMap((sg) => [
+        part(UNIT.slab, shadeHex(b.body, 1.45), { x: sg * 0.44, y: h * 0.42, rz: sg * 0.06, sx: 0.24, sy: h * 0.64, sz: 0.62, ...cloth }),
+        part(UNIT.wedge, shadeHex(b.body, 1.2), { x: sg * 0.5, y: h * 0.12, rz: sg * 0.1, ry: sg > 0 ? 0 : Math.PI, sx: 0.22, sy: 0.3, sz: 0.5, ...cloth }),
+        emit(B, b.accent, { x: sg * 0.57, y: h * 0.42, z: 0.02, sx: 0.035, sy: h * 0.62, sz: 0.54 }),
+        emit(B, b.accent, { x: sg * 0.44, y: h * 0.1, sx: 0.26, sy: 0.035, sz: 0.62 }),
       ]),
-      // boots with spurs
-      part(B, b.body, { x: 0.28, y: h * 0.16, sx: 0.28, sy: h * 0.32, sz: 0.28 }),
-      part(B, b.body, { x: -0.28, y: h * 0.16, sx: 0.28, sy: h * 0.32, sz: 0.28 }),
-      part(B, 0x3a2a20, { x: 0.28, y: h * 0.04, z: 0.08, sx: 0.34, sy: 0.18, sz: 0.5 }),
-      part(B, 0x3a2a20, { x: -0.28, y: h * 0.04, z: 0.08, sx: 0.34, sy: 0.18, sz: 0.5 }),
-      emit(UNIT.torus, b.eye, { x: 0.28, y: h * 0.06, z: -0.16, rx: 0, sx: 0.26, sy: 0.26, sz: 0.26 }),
-      emit(UNIT.torus, b.eye, { x: -0.28, y: h * 0.06, z: -0.16, rx: 0, sx: 0.26, sy: 0.26, sz: 0.26 }),
+      // Waistcoat, string tie, and the shirt underneath.
+      part(UNIT.slab, 0xe8e2d4, { y: h * 0.6, z: 0.26, sx: 0.42, sy: h * 0.3, sz: 0.05, ...cloth }),
+      part(UNIT.bevelBox, felt, { y: h * 0.56, z: 0.24, sx: 0.62, sy: h * 0.28, sz: 0.1, ...cloth }),
+      ...[1, -1].map((sg) => part(C, 0x8a1a2a, { x: sg * 0.06, y: h * 0.7, z: 0.3, rz: sg * 0.5, sx: 0.03, sy: 0.22, sz: 0.03, ...cloth })),
+      part(UNIT.disc, chrome, { y: h * 0.76, z: 0.31, rx: Math.PI / 2, sx: 0.12, sy: 0.04, sz: 0.12, ...shiny }),
+      // Belt buckle the size of a road sign.
+      part(UNIT.bevelBox, leather, { y: h * 0.36, sx: 0.94, sy: 0.14, sz: 0.56, ...hide }),
+      part(UNIT.bevelBox, 0xc9a227, { y: h * 0.36, z: 0.3, sx: 0.42, sy: 0.3, sz: 0.08, ...shiny }),
+      emit(B, b.eye, { y: h * 0.36, z: 0.35, sx: 0.3, sy: 0.18, sz: 0.02 }),
+      // Cartridge loops and two chips tucked in the belt.
+      ...Array.from({ length: 8 }, (_, i) => part(C, 0xb08a3a, {
+        x: -0.36 + i * 0.1, y: h * 0.36, z: -0.26, rx: Math.PI / 2, sx: 0.05, sy: 0.14, sz: 0.05, ...shiny,
+      })),
+      // Face under an enormous hat: shadowed, only the jaw and eyes lit.
+      part(UNIT.lowSphere, 0xe8c9a0, { y: h * 0.84, sx: 0.5, sy: 0.56, sz: 0.5, rough: 0.7, smooth: true }),
+      part(UNIT.wedge, 0xd8b48a, { y: h * 0.76, z: 0.2, ry: Math.PI / 2, rz: Math.PI, sx: 0.36, sy: 0.16, sz: 0.28, rough: 0.7 }),
+      part(UNIT.bevelBox, 0x1a1a20, { y: h * 0.87, z: 0.22, sx: 0.44, sy: 0.11, sz: 0.08 }),
+      emit(B, b.eye, { y: h * 0.87, z: 0.26, sx: 0.36, sy: 0.05, sz: 0.02 }),
+      part(UNIT.slab, 0x4a3a2a, { y: h * 0.73, z: 0.24, sx: 0.32, sy: 0.07, sz: 0.06, rough: 0.9 }),
+      part(UNIT.slab, 0x4a3a2a, { y: h * 0.69, z: 0.2, sx: 0.2, sy: 0.09, sz: 0.06, rough: 0.9 }),
+      // The hat: crown, dented pinch, curled brim, hatband with a card in it.
+      part(UNIT.lowCyl, felt, { y: h * 1.02, sx: 0.68, sy: 0.46, sz: 0.68, ...cloth }),
+      part(UNIT.wedge, shadeHex(felt, 1.4), { y: h * 1.2, ry: Math.PI / 2, rz: Math.PI, sx: 0.6, sy: 0.14, sz: 0.3, ...cloth }),
+      part(UNIT.lowCyl, felt, { y: h * 0.93, sx: 2.1, sy: 0.08, sz: 1.8, ...cloth }),
+      part(UNIT.pipe, shadeHex(felt, 1.6), { y: h * 0.93, sx: 2.12, sy: 0.1, sz: 1.82, ...cloth }),
+      part(UNIT.pipe, 0x8a1a2a, { y: h * 0.86, sx: 0.7, sy: 0.14, sz: 0.7, ...cloth }),
+      emit(B, b.accent, { y: h * 0.86, z: 0.34, sx: 0.5, sy: 0.05, sz: 0.02 }),
+      part(UNIT.slab, 0xe8e2d4, { x: 0.3, y: h * 0.92, z: 0.24, rz: 0.5, sx: 0.16, sy: 0.24, sz: 0.02, ...cloth }),
+      // Two long-barrelled revolvers, held out, hammers back.
+      ...[1, -1].flatMap((sg) => [
+        part(UNIT.capsule, b.body, { x: sg * 0.62, y: h * 0.58, z: 0.2, rx: -0.5, sx: 0.19, sy: h * 0.2, sz: 0.19, ...cloth }),
+        part(UNIT.capsule, b.body, { x: sg * 0.66, y: h * 0.44, z: 0.46, rx: -1.1, sx: 0.16, sy: h * 0.18, sz: 0.16, ...cloth }),
+        part(UNIT.bevelBox, leather, { x: sg * 0.66, y: h * 0.42, z: 0.62, sx: 0.16, sy: 0.16, sz: 0.16, ...hide }),
+        part(UNIT.bevelBox, chrome, { x: sg * 0.66, y: h * 0.46, z: 0.78, sx: 0.11, sy: 0.15, sz: 0.3, ...shiny }),
+        part(C, chrome, { x: sg * 0.66, y: h * 0.48, z: 1.12, rx: Math.PI / 2, sx: 0.07, sy: 0.5, sz: 0.07, ...shiny }),
+        part(UNIT.lowCyl, chrome, { x: sg * 0.66, y: h * 0.46, z: 0.86, rx: Math.PI / 2, sx: 0.15, sy: 0.16, sz: 0.15, ...shiny }),
+        ...Array.from({ length: 6 }, (_, i) => part(C, 0x1a1a20, {
+          x: sg * 0.66 + Math.cos(i * 1.047) * 0.05, y: h * 0.46 + Math.sin(i * 1.047) * 0.05, z: 0.86,
+          rx: Math.PI / 2, sx: 0.03, sy: 0.17, sz: 0.03,
+        })),
+        part(UNIT.slab, 0x6a4a2a, { x: sg * 0.66, y: h * 0.4, z: 0.68, rx: 0.4, sx: 0.09, sy: 0.16, sz: 0.1, ...hide }),
+        emit(UNIT.lowSphere, b.eye, { x: sg * 0.66, y: h * 0.48, z: 1.38, sx: 0.08, sy: 0.08, sz: 0.06 }),
+      ]),
+      // Legs, chaps, boots and spurs that actually turn.
+      ...[1, -1].flatMap((sg) => [
+        part(UNIT.capsule, b.body, { x: sg * 0.28, y: h * 0.2, sx: 0.27, sy: h * 0.16, sz: 0.27, ...cloth }),
+        part(UNIT.slab, leather, { x: sg * 0.33, y: h * 0.2, sx: 0.1, sy: h * 0.3, sz: 0.36, ...hide }),
+        ...Array.from({ length: 5 }, (_, i) => part(C, 0x6a4a2a, {
+          x: sg * 0.37, y: h * (0.32 - i * 0.06), rz: Math.PI / 2, sx: 0.06, sy: 0.1, sz: 0.06, ...hide,
+        })),
+        part(UNIT.bevelBox, 0x3a2a20, { x: sg * 0.28, y: h * 0.05, z: 0.1, sx: 0.32, sy: 0.2, sz: 0.54, ...hide }),
+        part(UNIT.slab, 0x1a1410, { x: sg * 0.28, y: h * 0.0, z: 0.1, sx: 0.34, sy: 0.05, sz: 0.56, rough: 0.95 }),
+        part(UNIT.ring, chrome, { x: sg * 0.28, y: h * 0.07, z: -0.2, rx: Math.PI / 2, ry: Math.PI / 2, sx: 0.24, sy: 0.24, sz: 0.24, ...shiny }),
+        ...Array.from({ length: 6 }, (_, i) => part(UNIT.cone, chrome, {
+          x: sg * 0.28, y: h * 0.07 + Math.sin(i * 1.047) * 0.11, z: -0.2 + Math.cos(i * 1.047) * 0.11,
+          rx: -1.57, rz: i * 1.047, sx: 0.05, sy: 0.09, sz: 0.05, ...shiny,
+        })),
+      ]),
     ];
   },
 
   gorbus(b, h) {
+    // An apologetic mass of slime that has been swallowing the Alpha Wing for
+    // years and is embarrassed about it. Everything he has taken is still
+    // suspended inside him, drifting, perfectly preserved.
+    const jelly = { metal: 0.1, rough: 0.12, smooth: true };
+    const swallowed = { metal: 0.4, rough: 0.6 };
     return [
-      // an apologetic mass of slime
-      part(S, b.body, { y: h * 0.44, sx: 2.5, sy: h * 0.58, sz: 2.1, opacity: 0.9 }),
-      part(S, b.body, { y: h * 0.78, z: 0.1, sx: 1.5, sy: 1.2, sz: 1.35, opacity: 0.9 }),
-      part(S, shadeHex(b.body, 1.25), { y: h * 0.2, sx: 2.7, sy: 0.5, sz: 2.3, opacity: 0.85 }),
-      // things he has collected, suspended inside him
-      part(B, 0x8a6a48, { x: -0.5, y: h * 0.36, z: 0.2, ry: 0.4, sx: 1.1, sy: 0.1, sz: 0.4 }),
-      part(B, 0x8a6a48, { x: -0.5, y: h * 0.54, z: 0.2, ry: 0.4, sx: 1.1, sy: 0.1, sz: 0.4 }),
-      part(C, 0xe8e2d4, { x: 0.62, y: h * 0.44, z: 0.3, sx: 0.32, sy: 0.34, sz: 0.32 }),
-      part(UNIT.torus, 0xe8e2d4, { x: 0.82, y: h * 0.44, z: 0.3, sx: 0.26, sy: 0.26, sz: 0.26 }),
-      // face: two big eyes and a smaller worried third
-      emit(S, b.eye, { x: 0.42, y: h * 0.86, z: 0.62, sx: 0.36, sy: 0.36, sz: 0.24 }),
-      emit(S, b.eye, { x: -0.42, y: h * 0.86, z: 0.62, sx: 0.36, sy: 0.36, sz: 0.24 }),
-      emit(S, b.eye, { y: h * 0.99, z: 0.58, sx: 0.2, sy: 0.2, sz: 0.14 }),
-      part(B, 0x1a3a1e, { y: h * 0.7, z: 0.66, rz: 0.06, sx: 0.5, sy: 0.08, sz: 0.06 }),
-      // glowing nodules through the body
-      ...Array.from({ length: 10 }, (_, i) => emit(IC, b.accent, {
-        x: Math.cos(i * 0.9) * 1.25, y: h * (0.24 + (i % 4) * 0.16), z: Math.sin(i * 0.9) * 1.05,
-        sx: 0.3, sy: 0.3, sz: 0.3, opacity: 0.9,
+      // Layered body — a stack of settling lobes, not one sphere.
+      part(UNIT.lowSphere, shadeHex(b.body, 1.25), { y: h * 0.18, sx: 2.75, sy: 0.6, sz: 2.35, opacity: 0.82, ...jelly }),
+      part(UNIT.lowSphere, b.body, { y: h * 0.42, sx: 2.5, sy: h * 0.5, sz: 2.15, opacity: 0.86, ...jelly }),
+      part(UNIT.lowSphere, b.body, { y: h * 0.66, z: 0.06, sx: 1.95, sy: 0.95, sz: 1.75, opacity: 0.86, ...jelly }),
+      part(UNIT.lowSphere, b.body, { y: h * 0.82, z: 0.1, sx: 1.5, sy: 1.15, sz: 1.35, opacity: 0.86, ...jelly }),
+      // Surface tension: a bright meniscus where each lobe meets the next.
+      ...[0.3, 0.55, 0.75].map((t, i) => part(UNIT.pipe, shadeHex(b.body, 1.5), {
+        y: h * t, sx: 2.5 - i * 0.5, sy: 0.1, sz: 2.15 - i * 0.42, opacity: 0.5, ...jelly,
       })),
-      // drooping arms and a dripping base
-      part(C, b.body, { x: 1.62, y: h * 0.48, rz: 0.5, sx: 0.48, sy: h * 0.46, sz: 0.48, opacity: 0.9 }),
-      part(C, b.body, { x: -1.62, y: h * 0.48, rz: -0.5, sx: 0.48, sy: h * 0.46, sz: 0.48, opacity: 0.9 }),
-      part(S, b.body, { x: 1.85, y: h * 0.22, sx: 0.6, sy: 0.55, sz: 0.6, opacity: 0.9 }),
-      part(S, b.body, { x: -1.85, y: h * 0.22, sx: 0.6, sy: 0.55, sz: 0.6, opacity: 0.9 }),
-      ...Array.from({ length: 6 }, (_, i) => part(CN, b.body, {
-        x: Math.cos(i * 1.047) * 0.9, y: h * 0.06, z: Math.sin(i * 1.047) * 0.8,
-        rx: Math.PI, sx: 0.3, sy: 0.34, sz: 0.3, opacity: 0.85,
+      // Things he has collected, suspended and slowly rotating.
+      part(UNIT.bevelBox, 0x8a6a48, { x: -0.5, y: h * 0.36, z: 0.2, ry: 0.4, rz: 0.2, sx: 1.1, sy: 0.1, sz: 0.42, ...swallowed }),
+      part(UNIT.bevelBox, 0x8a6a48, { x: -0.5, y: h * 0.54, z: 0.2, ry: 0.4, rz: -0.15, sx: 1.1, sy: 0.1, sz: 0.42, ...swallowed }),
+      ...[0, 1, 2, 3].map((i) => part(C, 0x6a5238, {
+        x: -0.5 + (i % 2 ? 0.44 : -0.44), y: h * 0.44, z: 0.2 + (i < 2 ? 0.16 : -0.16),
+        sx: 0.08, sy: 0.36, sz: 0.08, ...swallowed,
       })),
+      part(UNIT.lowSphere, 0xe8e2d4, { x: 0.62, y: h * 0.46, z: 0.3, sx: 0.36, sy: 0.4, sz: 0.36, ...swallowed }),
+      part(UNIT.torus, 0xe8e2d4, { x: 0.86, y: h * 0.44, z: 0.3, rx: 0.6, sx: 0.3, sy: 0.3, sz: 0.3, ...swallowed }),
+      part(UNIT.bevelBox, 0x3a4450, { x: 0.9, y: h * 0.68, z: -0.3, ry: 0.9, rx: 0.4, sx: 0.5, sy: 0.6, sz: 0.14, ...swallowed }),
+      part(UNIT.slab, 0xd8d4c8, { x: -0.9, y: h * 0.62, z: 0.4, ry: -0.5, rz: 0.4, sx: 0.34, sy: 0.44, sz: 0.02, ...swallowed }),
+      part(UNIT.hex, 0xc9a227, { x: 0.2, y: h * 0.24, z: -0.5, rx: 1.2, sx: 0.26, sy: 0.08, sz: 0.26, metal: 1, rough: 0.3 }),
+      // A whole chair, sideways, near the bottom.
+      part(UNIT.slab, 0x6a5238, { x: -0.2, y: h * 0.22, z: 0.6, rz: 1.4, sx: 0.6, sy: 0.06, sz: 0.6, ...swallowed }),
+      part(UNIT.slab, 0x6a5238, { x: -0.5, y: h * 0.22, z: 0.6, rz: 1.4, sx: 0.6, sy: 0.06, sz: 0.6, ...swallowed }),
+      // Face: two big eyes, a smaller worried third, a mouth that apologises.
+      ...[1, -1].flatMap((sg) => [
+        emit(UNIT.lowSphere, b.eye, { x: sg * 0.42, y: h * 0.88, z: 0.62, sx: 0.4, sy: 0.4, sz: 0.26 }),
+        part(UNIT.lowSphere, 0x102a14, { x: sg * 0.42, y: h * 0.87, z: 0.72, sx: 0.18, sy: 0.2, sz: 0.1 }),
+        emit(UNIT.lowSphere, 0xffffff, { x: sg * 0.48, y: h * 0.93, z: 0.75, sx: 0.09, sy: 0.09, sz: 0.05 }),
+      ]),
+      emit(UNIT.lowSphere, b.eye, { y: h * 1.0, z: 0.58, sx: 0.22, sy: 0.22, sz: 0.16 }),
+      part(UNIT.lowSphere, 0x102a14, { y: h * 1.0, z: 0.66, sx: 0.1, sy: 0.11, sz: 0.06 }),
+      part(UNIT.slab, 0x1a3a1e, { y: h * 0.7, z: 0.68, rz: 0.06, sx: 0.5, sy: 0.09, sz: 0.05 }),
+      part(UNIT.slab, 0x1a3a1e, { x: 0.22, y: h * 0.73, z: 0.66, rz: -0.5, sx: 0.16, sy: 0.07, sz: 0.05 }),
+      // Nodules glowing through the body, brighter deeper in.
+      ...Array.from({ length: 14 }, (_, i) => emit(UNIT.icosa, b.accent, {
+        x: Math.cos(i * 0.9) * (1.25 - (i % 3) * 0.3), y: h * (0.22 + (i % 5) * 0.14),
+        z: Math.sin(i * 0.9) * (1.05 - (i % 3) * 0.25),
+        sx: 0.26 + (i % 3) * 0.08, sy: 0.26 + (i % 3) * 0.08, sz: 0.26 + (i % 3) * 0.08,
+        opacity: 0.85,
+      })),
+      // Drooping arms that end in blunt paddles.
+      ...[1, -1].flatMap((sg) => [
+        part(UNIT.capsule, b.body, { x: sg * 1.62, y: h * 0.5, rz: sg * 0.5, sx: 0.46, sy: h * 0.26, sz: 0.46, opacity: 0.88, ...jelly }),
+        part(UNIT.capsule, b.body, { x: sg * 1.86, y: h * 0.26, rz: sg * 0.2, sx: 0.42, sy: h * 0.22, sz: 0.42, opacity: 0.88, ...jelly }),
+        part(UNIT.lowSphere, b.body, { x: sg * 1.92, y: h * 0.1, z: 0.1, sx: 0.66, sy: 0.42, sz: 0.72, opacity: 0.88, ...jelly }),
+        ...[0, 1, 2].map((i) => part(UNIT.capsule, b.body, {
+          x: sg * (1.86 + (i - 1) * 0.22), y: h * 0.04, z: 0.4, rx: 1.3,
+          sx: 0.16, sy: 0.3, sz: 0.16, opacity: 0.85, ...jelly,
+        })),
+      ]),
+      // Dripping base, and a puddle spreading under him.
+      ...Array.from({ length: 9 }, (_, i) => part(UNIT.cone, b.body, {
+        x: Math.cos(i * 0.7) * (0.9 + (i % 3) * 0.35), y: h * (0.06 - (i % 2) * 0.02),
+        z: Math.sin(i * 0.7) * (0.8 + (i % 3) * 0.3),
+        rx: Math.PI, sx: 0.26, sy: 0.34 + (i % 3) * 0.14, sz: 0.26, opacity: 0.82, ...jelly,
+      })),
+      part(UNIT.lowCyl, b.body, { y: 0.03, sx: 3.4, sy: 0.06, sz: 3.0, opacity: 0.35, ...jelly }),
     ];
   },
 
@@ -1191,40 +1547,78 @@ const BOSS_BUILDERS = {
   },
 
   gelatinfingers(b, h) {
+    // A tall man in a good suit that never finished setting. He is translucent
+    // from the collar up and the fingers are the horror: twenty of them, each
+    // longer than his forearm, drooping to the floor and pooling there.
+    const suitDark = 0x2a1a20, shirt = 0xe8dce4;
+    const gel = { metal: 0.06, rough: 0.14, smooth: true };
+    const wool = { metal: 0.0, rough: 0.88 };
     return [
-      // a tall figure in a suit that never finished setting
-      part(B, 0x2a1a20, { y: h * 0.5, sx: 1.1, sy: h * 0.5, sz: 0.6 }),
-      part(B, b.body, { y: h * 0.5, sx: 1.14, sy: h * 0.5, sz: 0.64, opacity: 0.62 }),
-      ...[1, -1].map((sgn) => part(B, 0x1a1016, {
-        x: sgn * 0.26, y: h * 0.52, z: 0.3, sx: 0.3, sy: h * 0.46, sz: 0.06,
+      // The suit: shoulders, lapels, a waistcoat, a pocket square.
+      part(UNIT.bevelBox, suitDark, { y: h * 0.5, sx: 1.08, sy: h * 0.5, sz: 0.6, ...wool }),
+      part(UNIT.bevelBox, b.body, { y: h * 0.5, sx: 1.14, sy: h * 0.5, sz: 0.64, opacity: 0.58, ...gel }),
+      part(UNIT.bevelBox, suitDark, { y: h * 0.74, sx: 1.5, sy: 0.24, sz: 0.62, ...wool }),
+      ...[1, -1].map((sg) => part(UNIT.wedge, 0x1a1016, {
+        x: sg * 0.26, y: h * 0.62, z: 0.3, rz: sg > 0 ? 0.2 : -0.2, ry: sg > 0 ? 0 : Math.PI,
+        sx: 0.3, sy: h * 0.3, sz: 0.08, ...wool,
       })),
-      part(B, 0xe8dce4, { y: h * 0.62, z: 0.31, sx: 0.2, sy: h * 0.22, sz: 0.04 }),
-      // half-melted head
-      part(S, b.body, { y: h * 0.85, sx: 0.78, sy: 0.82, sz: 0.76, opacity: 0.72 }),
-      part(S, b.body, { y: h * 0.72, z: 0.1, sx: 0.6, sy: 0.5, sz: 0.5, opacity: 0.72 }),
-      emit(S, b.eye, { x: 0.18, y: h * 0.88, z: 0.32, sx: 0.19, sy: 0.22, sz: 0.12 }),
-      emit(S, b.eye, { x: -0.2, y: h * 0.84, z: 0.32, sx: 0.16, sy: 0.19, sz: 0.12 }),
-      part(B, 0x2a1420, { y: h * 0.72, z: 0.34, rz: 0.14, sx: 0.3, sy: 0.05, sz: 0.06 }),
-      // shoulders sagging under their own weight
-      part(B, b.body, { y: h * 0.72, sx: 1.5, sy: 0.24, sz: 0.6, opacity: 0.7 }),
-      // the fingers: absurdly long, drooping to the floor
-      ...[1, -1].flatMap((sgn) => [
-        part(C, b.body, { x: sgn * 0.72, y: h * 0.52, rz: sgn * 0.16, sx: 0.28, sy: h * 0.44, sz: 0.28, opacity: 0.7 }),
-        ...Array.from({ length: 5 }, (_, i) => part(C, b.accent, {
-          x: sgn * (0.66 + i * 0.13),
-          y: h * (0.26 - i * 0.035),
-          z: 0.1 + i * 0.14,
-          rx: 0.24 + i * 0.05, rz: sgn * (0.1 + i * 0.04),
-          sx: 0.11, sy: h * (0.46 - i * 0.05), sz: 0.11, opacity: 0.82,
-        })),
+      part(UNIT.slab, shirt, { y: h * 0.62, z: 0.31, sx: 0.2, sy: h * 0.24, sz: 0.04, ...wool }),
+      part(UNIT.slab, 0x6a1a2a, { x: 0.34, y: h * 0.7, z: 0.32, rz: 0.3, sx: 0.14, sy: 0.1, sz: 0.03, ...wool }),
+      ...[0, 1, 2].map((i) => part(UNIT.hex, 0x1a1016, {
+        y: h * (0.54 - i * 0.09), z: 0.33, rx: Math.PI / 2, sx: 0.06, sy: 0.03, sz: 0.06, ...wool,
+      })),
+      // A tie that has begun to run down the shirt.
+      part(UNIT.slab, 0x4a1020, { y: h * 0.66, z: 0.33, sx: 0.09, sy: h * 0.18, sz: 0.03, ...wool }),
+      part(UNIT.cone, 0x4a1020, { y: h * 0.5, z: 0.33, rx: Math.PI, sx: 0.08, sy: 0.14, sz: 0.03, ...gel }),
+      // Head: half-melted, sliding off to one side, features drifting.
+      part(UNIT.lowSphere, b.body, { y: h * 0.87, x: 0.04, sx: 0.78, sy: 0.84, sz: 0.76, opacity: 0.66, ...gel }),
+      part(UNIT.lowSphere, b.body, { y: h * 0.72, z: 0.1, sx: 0.66, sy: 0.55, sz: 0.55, opacity: 0.66, ...gel }),
+      part(UNIT.cone, b.body, { x: -0.24, y: h * 0.66, z: 0.02, rx: Math.PI, sx: 0.22, sy: 0.4, sz: 0.22, opacity: 0.62, ...gel }),
+      part(UNIT.lowSphere, b.body, { y: h * 1.0, x: 0.1, sx: 0.5, sy: 0.3, sz: 0.48, opacity: 0.6, ...gel }),
+      emit(UNIT.lowSphere, b.eye, { x: 0.18, y: h * 0.9, z: 0.32, sx: 0.2, sy: 0.24, sz: 0.13 }),
+      emit(UNIT.lowSphere, b.eye, { x: -0.2, y: h * 0.83, z: 0.32, sx: 0.17, sy: 0.2, sz: 0.13 }),
+      part(UNIT.lowSphere, 0x1a0a10, { x: 0.18, y: h * 0.89, z: 0.4, sx: 0.09, sy: 0.11, sz: 0.05 }),
+      part(UNIT.lowSphere, 0x1a0a10, { x: -0.2, y: h * 0.82, z: 0.4, sx: 0.08, sy: 0.1, sz: 0.05 }),
+      part(UNIT.slab, 0x2a1420, { y: h * 0.72, z: 0.36, rz: 0.16, sx: 0.32, sy: 0.06, sz: 0.04 }),
+      // A collar and a hat brim he is still, technically, wearing.
+      part(UNIT.pipe, shirt, { y: h * 0.78, sx: 0.6, sy: 0.12, sz: 0.6, ...wool }),
+      part(UNIT.lowCyl, 0x1a1016, { y: h * 1.12, x: 0.1, sx: 1.5, sy: 0.06, sz: 1.4, ...wool }),
+      part(UNIT.lowCyl, 0x1a1016, { y: h * 1.2, x: 0.1, sx: 0.66, sy: 0.3, sz: 0.66, ...wool }),
+      // The fingers. Ten a side, jointed, drooping, pooling on the floor.
+      ...[1, -1].flatMap((sg) => [
+        part(UNIT.capsule, b.body, { x: sg * 0.72, y: h * 0.56, rz: sg * 0.16, sx: 0.28, sy: h * 0.2, sz: 0.28, opacity: 0.66, ...gel }),
+        part(UNIT.lowSphere, b.body, { x: sg * 0.78, y: h * 0.38, sx: 0.3, sy: 0.28, sz: 0.3, opacity: 0.66, ...gel }),
+        part(UNIT.capsule, b.body, { x: sg * 0.82, y: h * 0.26, rz: sg * 0.08, sx: 0.24, sy: h * 0.16, sz: 0.24, opacity: 0.66, ...gel }),
+        part(UNIT.lowSphere, b.body, { x: sg * 0.84, y: h * 0.14, sx: 0.34, sy: 0.24, sz: 0.34, opacity: 0.68, ...gel }),
+        ...Array.from({ length: 5 }, (_, i) => [
+          part(C, b.accent, {
+            x: sg * (0.72 + i * 0.11), y: h * (0.1 - i * 0.008), z: 0.06 + i * 0.11,
+            rx: 0.5 + i * 0.06, rz: sg * (0.08 + i * 0.03),
+            sx: 0.1, sy: h * (0.26 - i * 0.02), sz: 0.1, opacity: 0.8, ...gel,
+          }),
+          part(C, b.accent, {
+            x: sg * (0.74 + i * 0.12), y: h * 0.02, z: 0.34 + i * 0.13,
+            rx: 1.35, rz: sg * (0.1 + i * 0.04),
+            sx: 0.09, sy: h * (0.24 - i * 0.02), sz: 0.09, opacity: 0.8, ...gel,
+          }),
+          part(UNIT.lowSphere, b.accent, {
+            x: sg * (0.76 + i * 0.13), y: 0.05, z: 0.62 + i * 0.14,
+            sx: 0.16, sy: 0.07, sz: 0.16, opacity: 0.7, ...gel,
+          }),
+        ]).flat(),
       ]),
-      // dripping base
-      ...Array.from({ length: 5 }, (_, i) => part(CN, b.accent, {
-        x: (i - 2) * 0.32, y: h * 0.05, z: (i % 2) * 0.2 - 0.1,
-        rx: Math.PI, sx: 0.18, sy: 0.3, sz: 0.18, opacity: 0.8,
+      // Legs and the puddle he is standing in.
+      ...[1, -1].map((sg) => part(UNIT.capsule, suitDark, {
+        x: sg * 0.3, y: h * 0.18, sx: 0.34, sy: h * 0.22, sz: 0.34, ...wool,
       })),
-      part(B, 0x2a1a20, { x: 0.3, y: h * 0.14, sx: 0.34, sy: h * 0.3, sz: 0.34 }),
-      part(B, 0x2a1a20, { x: -0.3, y: h * 0.14, sx: 0.34, sy: h * 0.3, sz: 0.34 }),
+      ...[1, -1].map((sg) => part(UNIT.bevelBox, 0x14090e, {
+        x: sg * 0.3, y: 0.08, z: 0.12, sx: 0.36, sy: 0.16, sz: 0.6, metal: 0.4, rough: 0.35,
+      })),
+      ...Array.from({ length: 6 }, (_, i) => part(UNIT.cone, b.accent, {
+        x: (i - 2.5) * 0.3, y: h * 0.06, z: (i % 2) * 0.24 - 0.12,
+        rx: Math.PI, sx: 0.17, sy: 0.3 + (i % 3) * 0.12, sz: 0.17, opacity: 0.78, ...gel,
+      })),
+      part(UNIT.lowCyl, b.accent, { y: 0.02, sx: 2.6, sy: 0.04, sz: 2.2, opacity: 0.3, ...gel }),
     ];
   },
 
