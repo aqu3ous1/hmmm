@@ -12,7 +12,23 @@ import { generateLayout, Level, CELL, WALL_H, GRID } from './world/level.js';
 import { objectiveKind } from './world/objectives.js';
 import { LORE, ALL_LORE, EGGS, buildTerminal, buildCache, buildCacheKey, buildEgg } from './world/secrets.js';
 import { contractFor } from './world/contracts.js';
-import { disposeTree } from './world/geometry.js';
+import {
+  disposeTree, mergeGeometries, paintRGB, xform, UNIT,
+} from './world/geometry.js';
+
+/**
+ * Fold an alpha into a colour.
+ *
+ * Under additive blending the source contributes `colour × alpha`, so a colour
+ * scaled by its intended opacity, drawn at alpha 1, is pixel-identical — and it
+ * lets a whole set of differently-transparent panels share one material.
+ */
+function premultiply(hex, alpha) {
+  const r = Math.round(((hex >> 16) & 255) * alpha);
+  const g = Math.round(((hex >> 8) & 255) * alpha);
+  const b = Math.round((hex & 255) * alpha);
+  return (r << 16) | (g << 8) | b;
+}
 
 import { Player } from './entities/player.js';
 import { Enemy, FlowField } from './entities/enemy.js';
@@ -27,6 +43,12 @@ import { WeaponRuntime } from './combat/weaponRuntime.js';
 
 import { Chest, WeaponIconCache } from './props/chest.js';
 import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/models.js';
+import { buildHands, holdFor, KIT_HAND_SCALE } from './render/hands.js';
+
+// Where the firing hand sits in the viewmodel holder, for every weapon. Fixed,
+// because hands that move around between weapons is what a floating prop looks
+// like even once you have modelled the hands.
+const HAND_REST = { y: -0.02, z: -0.10 };
 
 import { PostFX } from './render/postfx.js';
 import { Director, shot } from './render/director.js';
@@ -192,9 +214,14 @@ class Game {
     this.vmHolder.scale.setScalar(0.4);
     this.vmScene.add(this.vmHolder);
     this.vmModel = null;
+    // Hands live beside the model rather than inside it, so that the model's
+    // own scale normalisation and its spin (miniguns) do not drag them along.
+    // A hand is a fixed real-world size no matter what it is holding.
+    this.vmHands = null;
     this.vmSwing = 0;
     this.vmKick = 0;
     this.vmSwapT = 1;
+    this.vmReloadPose = 0;
   }
 
   _initPlayer() {
@@ -357,6 +384,12 @@ class Game {
     this.player.carryPenalty = 1;
     this.hud.setTimer(null);
     this.nodes.length = 0;
+    // Corpses outlived the floor they died on: still in the array, still
+    // parented into propGroup, still being animated — so for the two seconds
+    // it took them to decay they lay in mid-air in the *next* level, at the
+    // coordinates of the room they were killed in.
+    for (const c of (this.corpses || [])) this._retireCorpse(c);
+    this.corpses.length = 0;
     for (const p of this.pickups) { disposeTree(p.group); this.propGroup.remove(p.group); }
     this.pickups.length = 0;
     for (const v of this.vendors) { disposeTree(v.group); this.propGroup.remove(v.group); }
@@ -687,10 +720,24 @@ class Game {
    */
   _makeCorpse(enemy) {
     const mesh = enemy.mesh;
+    if (!mesh) { enemy.dispose(); return; }
     // Each corpse is a full rig, so it costs what a live enemy costs to draw.
     // Eight is enough that a good burst leaves a pile and few enough that it
-    // cannot double the frame's draw calls during the heaviest wave.
-    if (!mesh || this.corpses.length >= 8) { enemy.dispose(); return; }
+    // cannot double the frame's draw calls during the heaviest wave. Retire the
+    // oldest rather than refusing the newest: dropping the new one meant that
+    // once the pile filled, the kill the player was looking at was the one that
+    // vanished on the spot, while eight older ones lay around untouched.
+    while (this.corpses.length >= 8) {
+      // The most-decayed one, not index 0: _updateCorpses removes by swapping
+      // the last element down, so array order stops meaning age after the
+      // first expiry and `shift()` would start evicting fresh kills.
+      let oldest = 0;
+      for (let i = 1; i < this.corpses.length; i++) {
+        if (this.corpses[i].t > this.corpses[oldest].t) oldest = i;
+      }
+      this._retireCorpse(this.corpses[oldest]);
+      swapRemove(this.corpses, oldest);
+    }
     // Hand the mesh over before dispose() can take it.
     enemy.mesh = null;
     enemy.dispose();
@@ -698,10 +745,17 @@ class Game {
     // Fall away from whatever killed it, with a little spin.
     const p = this.player.pos;
     const away = Math.atan2(mesh.position.x - p.x, mesh.position.z - p.z);
+    // Drop the contact shadow. It is one shared material across every enemy on
+    // the floor now, so fading it here would fade all of them — and a corpse
+    // sinking into the floor has no business casting a crisp shadow anyway.
+    const shadow = mesh.children.find((c) => c.userData?.shadow);
+    if (shadow) mesh.remove(shadow);
     const materials = [];
     mesh.traverse((o) => {
       if (!o.material) return;
       for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+        // Never write to a material the rest of the floor is also using.
+        if (m.userData?.shared) continue;
         if (!materials.includes(m)) { m.transparent = true; materials.push(m); }
       }
     });
@@ -759,11 +813,18 @@ class Game {
       for (const mat of c.materials) mat.opacity = Math.max(0, fade);
 
       if (k >= 1) {
-        disposeTree(m);
-        this.propGroup.remove(m);
+        this._retireCorpse(c);
         swapRemove(this.corpses, i);
       }
     }
+  }
+
+  /** Free a corpse's rig. Shared by expiry and by the cap evicting the oldest. */
+  _retireCorpse(c) {
+    if (!c?.mesh) return;
+    disposeTree(c.mesh);
+    this.propGroup.remove(c.mesh);
+    c.mesh = null;
   }
 
   /**
@@ -776,6 +837,9 @@ class Game {
   _postContract(cfg, rng) {
     const def = contractFor(this.floorIndex, rng);
     this.contract = null;
+    // The previous floor's strip would otherwise sit there naming a contract
+    // that no longer exists.
+    this.hud.setContract(null);
     if (!def) return;
     const spawn = this.level.rooms[0];
     const spots = this.level._wallSpots(spawn);
@@ -1026,7 +1090,23 @@ class Game {
     const ring = [];
     for (let x = r.x - 1; x <= r.x + r.w; x++) { ring.push([x, r.z - 1]); ring.push([x, r.z + r.h]); }
     for (let z = r.z - 1; z <= r.z + r.h; z++) { ring.push([r.x - 1, z]); ring.push([r.x + r.w, z]); }
-    const boxes = [];
+    // Two meshes for the whole seal, not eighty.
+    //
+    // Each doorway is a field plane, two frame bars, six scan lines and one
+    // travelling bar. Built as separate meshes with their own materials that
+    // came to ten meshes and ten materials per doorway, and a sealed boss room
+    // has eight of them — eighty draw calls sitting on screen for the entire
+    // fight, which was the single largest item in the frame after the enemies.
+    // Everything static merges into one geometry; the travelling bars all scan
+    // in phase, so they merge into a second one that simply moves in Y.
+    //
+    // The per-bar opacity folds into vertex colour instead. Under additive
+    // blending the source contributes `colour × alpha`, so a colour premultiplied
+    // by its old opacity against alpha 1 is the same pixel — and it collapses
+    // four materials into one.
+    const statics = [];
+    const scans = [];
+    const FIELD = 0xff4a5a, EDGE = 0xff6a5a;
     for (const [cx, cz] of ring) {
       if (level.isSolidCell(cx, cz)) continue;
       this.gateCells.push(cx + cz * GRID);
@@ -1040,41 +1120,37 @@ class Game {
       for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         // Only face the sides that open onto somewhere you could walk from.
         if (level.isSolidCell(cx + dx, cz + dz)) continue;
-        const g = new THREE.Group();
-        g.position.set(wx + dx * CELL * 0.48, WALL_H / 2, wz + dz * CELL * 0.48);
-        g.rotation.y = Math.atan2(dx, dz);
-        const field = new THREE.Mesh(
-          new THREE.PlaneGeometry(CELL, WALL_H),
-          new THREE.MeshBasicMaterial({
-            color: 0xff4a5a, transparent: true, opacity: 0.13,
-            depthWrite: false, side: THREE.DoubleSide,
-            blending: THREE.AdditiveBlending,
-          }),
-        );
-        g.add(field);
-        // Frame and scan bars, brighter than the field so it has edges.
-        const bar = (y, h2, o) => {
-          const m = new THREE.Mesh(
-            new THREE.PlaneGeometry(CELL, h2),
-            new THREE.MeshBasicMaterial({
-              color: 0xff6a5a, transparent: true, opacity: o,
-              depthWrite: false, side: THREE.DoubleSide,
-              blending: THREE.AdditiveBlending,
-            }),
-          );
-          m.position.y = y;
-          g.add(m);
-          return m;
-        };
-        bar(WALL_H / 2 - 0.06, 0.12, 0.85);
-        bar(-WALL_H / 2 + 0.06, 0.12, 0.85);
-        for (let k = 0; k < 6; k++) bar(-WALL_H / 2 + 0.5 + k * 0.72, 0.03, 0.3);
-        g.userData.scan = bar(0, 0.09, 0.55);
-        boxes.push(g);
+        const px = wx + dx * CELL * 0.48, pz = wz + dz * CELL * 0.48;
+        const ry = Math.atan2(dx, dz);
+        const panel = (y, h2, color, alpha, into) => into.push(paintRGB(
+          xform(UNIT.plane, { x: px, y: WALL_H / 2 + y, z: pz, ry, sx: CELL, sy: h2 }),
+          premultiply(color, alpha),
+        ));
+        panel(0, WALL_H, FIELD, 0.13, statics);
+        panel(WALL_H / 2 - 0.06, 0.12, EDGE, 0.85, statics);
+        panel(-WALL_H / 2 + 0.06, 0.12, EDGE, 0.85, statics);
+        for (let k = 0; k < 6; k++) panel(-WALL_H / 2 + 0.5 + k * 0.72, 0.03, EDGE, 0.3, statics);
+        // The travelling bar is authored at the panel's mid-height so the
+        // whole merged sheet can be slid in Y as one object.
+        panel(0, 0.09, EDGE, 1, scans);
       }
     }
+    const glass = (parts) => new THREE.Mesh(
+      mergeGeometries(parts),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, vertexColors: true, transparent: true,
+        depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, toneMapped: false,
+      }),
+    );
     this.barrierMesh = new THREE.Group();
-    for (const b of boxes) this.barrierMesh.add(b);
+    if (statics.length) this.barrierMesh.add(glass(statics));
+    if (scans.length) {
+      const scan = glass(scans);
+      scan.userData.scan = true;
+      this.barrierMesh.userData.scan = scan;
+      this.barrierMesh.add(scan);
+    }
     this.scene.add(this.barrierMesh);
     this.bossSealed = true;
   }
@@ -1185,13 +1261,21 @@ class Game {
     const input = this.input;
 
     // --- global keys ---
-    if (input.pressed('Escape')) { this.pause(); return; }
-
     // A cutscene swallows the controls. Any key skips it — a cinematic you
-    // cannot get out of is one the player resents on the second run.
+    // cannot get out of is one the player resents on the second run. Escape is
+    // checked here rather than below, because the screen says ANY KEY and
+    // Escape is the first key most people reach for; pausing instead would
+    // freeze the camera mid-shot and make a liar of the prompt.
     if (this.cine?.active) {
+      // Drain the look accumulator on the way out. Returning without it let
+      // mouse movement pile up for the length of the cutscene and then land in
+      // a single frame the moment it ended, which threw the camera across the
+      // room right as the player got control back.
+      input.takeLook();
       if (input.anyPressed() || input.mouse.leftPressed) this.cine.skip();
+      return;
     }
+    if (input.pressed('Escape')) { this.pause(); return; }
     if (input.pressed('KeyM')) {
       audio.setVolume(audio.volume > 0 ? 0 : 0.7);
       this.hud.toast(audio.volume > 0 ? 'AUDIO ON' : 'AUDIO MUTED', 'info', 1);
@@ -1201,11 +1285,11 @@ class Game {
     if (showLoadout) renderLoadoutDetail(player, this.runtime, this.pairing);
 
     // --- look ---
-    if (input.locked && !this.cine?.active) {
+    // The cutscene case never reaches here — it returns above, draining the
+    // look on its way past.
+    if (input.locked) {
       const look = input.takeLook();
       player.look(look.yaw, look.pitch);
-    } else if (this.cine?.active) {
-      input.takeLook();
     }
 
     // --- weapon selection ---
@@ -1237,16 +1321,15 @@ class Game {
     if (!this.cine?.active) this._updateProjectiles(dt);
     this._updateChests(dt);
     this._updateNodes(dt);
-    if (this.barrierMesh) {
+    const scan = this.barrierMesh?.userData.scan;
+    if (scan) {
       // One bar travelling up each panel: a barrier that is not moving is a
       // wall, and the player needs to read this as something that will open.
+      // Every panel's bar is merged into this one sheet and they all scan in
+      // phase, so moving the sheet moves all of them.
       const y = ((this.now * 1.6) % 1) * WALL_H - WALL_H / 2;
-      for (const g of this.barrierMesh.children) {
-        if (g.userData?.scan) {
-          g.userData.scan.position.y = y;
-          g.userData.scan.material.opacity = 0.55 * (1 - Math.abs(y) / (WALL_H / 2)) + 0.12;
-        }
-      }
+      scan.position.y = y;
+      scan.material.opacity = 0.55 * (1 - Math.abs(y) / (WALL_H / 2)) + 0.12;
     }
     this._updateCorpses(dt);
     this._updateSecrets(dt);
@@ -2082,6 +2165,19 @@ class Game {
     // own hum returning is the sound of it being over.
     this.ambience.setLevel(1, 2.4);
     audio.levelUp();
+    // …and so does the floor's own theme. There was a way *into* the boss
+    // fight musically and no way out of it: the boss theme simply kept playing
+    // over the corpse, the loot, the lift and halfway into the next floor,
+    // which is the aural equivalent of a fight that never gets an ending.
+    // Slower and quieter than the floor's normal bed, with the arpeggio
+    // dropped, so the aftermath is an exhale rather than a reset.
+    const bed = this.floorCfg?.music;
+    if (bed) {
+      audio.crossfadeMusic({
+        ...bed, pad: true, arp: false, bass: true,
+        bpm: Math.round((bed.bpm ?? 96) * 0.82), intensity: 0.34,
+      }, 2.2);
+    }
     this.hud.screenFlash(0.6);
     this.hud.banner('BOSS DOWN', def.name, 3.6);
 
@@ -2685,6 +2781,11 @@ class Game {
       this.vmHolder.remove(this.vmModel);
       this.vmModel = null;
     }
+    if (this.vmHands) {
+      disposeTree(this.vmHands);
+      this.vmHolder.remove(this.vmHands);
+      this.vmHands = null;
+    }
     if (!weapon) return;
     this.vmModel = buildWeaponModel(weapon.id, weapon);
 
@@ -2703,24 +2804,103 @@ class Game {
     // ended up filling the screen. Cross-section dominates what the frame
     // actually costs, so it dominates here too.
     const bulk = Math.max(size.x, size.y) * 2.8 + size.z * 0.32;
-    const k = (weapon.kind === 'melee' ? 1.55 : 1.35) / Math.max(0.001, bulk);
+    const hold = holdFor(weapon.id, weapon.kind);
+    // `frame` lets a weapon opt out of filling the screen. Only the knuckle
+    // duster needs it: it is worn rather than held, so the hand is necessarily
+    // wider than the weapon, and normalising the brass to fill the frame put a
+    // fist the size of the frame behind it.
+    const k = (weapon.kind === 'melee' ? 1.55 : 1.35)
+      * (hold.frame ?? 1) / Math.max(0.001, bulk);
     this.vmModel.scale.setScalar(k);
 
-    // Centre laterally, but anchor along the barrel near the grip rather than
-    // at the centroid: the hands stay put and long weapons extend away from
-    // the camera instead of reaching back past it.
-    // Short weapons need lifting: with the model centred, a pistol's whole
-    // silhouette sits below a rifle's and the loadout panel crops it. Bias by
-    // how tall the framed model actually is rather than by weapon category.
-    const framedH = size.y * k;
+    // Frame on the grip, not on the bounding box.
+    //
+    // Anchoring on the centroid centres whatever the model happens to be
+    // mostly made of, which for the Staggeringly Large Knife is 1.7 units of
+    // blade — so the handle, and both hands holding it, ended up off the
+    // bottom-right corner. Every real first-person viewmodel does the
+    // opposite: the hands sit at a fixed place on screen and the weapon
+    // extends forward from them, so a long gun reaches further into the frame
+    // rather than shoving its own grip out of it. `HAND_REST` is that fixed
+    // place, and it is the same for all twenty-two weapons.
+    const grip = hold.grip || [0, 0];
     this.vmModel.position.set(
       -centre.x * k,
-      -centre.y * k + Math.max(0, 0.34 - framedH) * 0.55,
-      -(box.min.z + size.z * 0.46) * k,
+      HAND_REST.y - grip[0] * k,
+      HAND_REST.z - grip[1] * k,
     );
     this.vmModel.userData.frameScale = k;
 
     this.vmHolder.add(this.vmModel);
+
+    // --- hands ------------------------------------------------------------
+    // Siblings of the model, not children of it. The model carries its own
+    // spin (the Behemoth's barrel cluster) and its own framing scale; a hand
+    // parented into that would rotate with the barrels and shrink when the
+    // weapon did. Placing the rig alongside means a model-space point `q`
+    // lands at `vmModel.position + k * q`, which is all the arithmetic below.
+    const hands = buildHands(hold);
+    const mp = this.vmModel.position;
+    // Depth and height fall out for free now the model is grip-anchored: the
+    // grip is at HAND_REST, so the firing hand goes there and never moves
+    // between weapons. Laterally the rig follows the model's own centring, so
+    // a gun with an off-centre magazine does not leave the hands beside it.
+    hands.position.set(mp.x, HAND_REST.y, HAND_REST.z);
+
+    // Size the hands off the weapon's own scale rather than fixing them.
+    //
+    // The framing scale `k` does not preserve real-world size — it normalises
+    // visual bulk — so a mop ends up drawn at half the units-per-metre of a
+    // rifle. Fixed-size hands are therefore right for exactly one weapon and
+    // wrong for the other twenty-one; on the mop they came out looking like
+    // oven gloves. Tracking `k` makes the hand match the grip it is closing on,
+    // which is the thing the eye actually checks, and `hs` carries how big a
+    // hand is in that particular model's units. The clamp is only a guard
+    // against a model with a degenerate bounding box, not a tuning knob.
+    const handScale = clamp(k * (hold.hs ?? KIT_HAND_SCALE), 0.4, 8);
+    for (const limb of [hands.userData.right, hands.userData.left]) {
+      if (!limb) continue;
+      limb.scale.setScalar(handScale);
+      // Cap how far the forearm reaches back, in holder space rather than in
+      // the hand's own units. The arm is authored proportional to the hand, so
+      // on a knuckle duster — where the hand has to be scaled up five-fold to
+      // fit brass authored three times a real hand's span — the forearm came
+      // out two and a half units long, ran straight through the near plane and
+      // filled the entire screen with a pale blue slab. Thickness still tracks
+      // the hand so the wrist join holds; only the length is bounded.
+      const reach = limb.userData.armLen * handScale;
+      limb.userData.arm.scale.set(1, 1, Math.min(1, 0.78 / Math.max(0.01, reach)));
+    }
+    const left = hands.userData.left;
+    if (left) {
+      // The rig's origin is the grip, so a model-space point `q` sits at
+      // `(q - grip) * k` from here. Forgetting to subtract the grip put the
+      // off hand a fifth of the weapon's length behind where it belonged —
+      // on the magazine, for a rifle.
+      if (hold.support || hold.fz != null) {
+        const my = hold.support ? hold.support[0] : box.min.y + size.y * hold.fy;
+        const mz = hold.support ? hold.support[1] : box.min.z + size.z * hold.fz;
+        left.position.set(0, (my - grip[0]) * k, (mz - grip[1]) * k);
+      } else {
+        // The cupped pistol grip has no point on the weapon to reach for — it
+        // closes on the firing hand — so buildHands authored its offset in hand
+        // units. Scale it, or the two hands drift apart on a big pistol and
+        // interpenetrate on a small one.
+        left.position.multiplyScalar(handScale);
+      }
+      // Remember the rest pose: the reload animation moves the off hand away
+      // from it and has to be able to put it back.
+      hands.userData.leftRest = left.position.clone();
+      hands.userData.leftRestRot = left.rotation.clone();
+      // And where the magazine well is — just forward of the grip and below
+      // the receiver, which is where a magazine lives on nearly everything.
+      hands.userData.leftMag = new THREE.Vector3(
+        0.03, (box.min.y - grip[0]) * k - 0.04, (size.z * 0.10) * k,
+      );
+    }
+    this.vmReloadPose = 0;
+    this.vmHands = hands;
+    this.vmHolder.add(hands);
     this.vmSwapT = 0;
   }
 
@@ -2764,14 +2944,17 @@ class Game {
       0.02 + sway * 1.2 + swingAmt * 0.5,
     );
 
+    let reloadT = -1;
     if (w?.reloading) {
       const e = this.runtime.eff(w);
       const t = 1 - clamp((w.reloadEnd - this.now) / Math.max(0.05, e.reload), 0, 1);
+      reloadT = t;
       const dip = Math.sin(t * Math.PI);
       this.vmHolder.position.y -= dip * 0.24;
       this.vmHolder.rotation.x += dip * 0.7;
       this.vmHolder.rotation.z += dip * 0.3;
     }
+    this._poseHands(reloadT, dt);
     if (w && w.spin > 0.01) {
       this.vmModel.rotation.z = (this.vmModel.rotation.z + dt * w.spin * 26) % TAU;
     } else if (this.vmModel) {
@@ -2782,6 +2965,49 @@ class Game {
       this.vmHolder.rotation.x -= w.charge * 0.14;
     }
     this._animateWeaponParts(w, dt);
+  }
+
+  /**
+   * Move the off hand for a reload.
+   *
+   * A magazine that ejects and a fresh one that appears while the support hand
+   * stays welded to the handguard is worse than no hands at all — it draws the
+   * eye straight to the thing that is not happening. So the hand leaves the
+   * rail, drops to the well, and comes back, and it is critically damped on the
+   * way out of it so a cancelled reload does not snap.
+   *
+   * `t` is reload progress 0..1, or -1 when not reloading.
+   */
+  _poseHands(t, dt) {
+    const h = this.vmHands;
+    if (!h) return;
+    const left = h.userData.left;
+    if (!left || !h.userData.leftRest) return;
+
+    // Out fast, hold at the well, back slower — the same asymmetry a real
+    // magazine change has, and the reason a linear sine looks robotic. The
+    // timings are pinned to _animateWeaponParts: the magazine bottoms out at
+    // 0.45 (inside the hold), seats at 0.85, and the slide slams at 0.88, so
+    // the hand is back on the rail exactly as the gun goes live. A support
+    // hand still floating out in space over that slam is the frame everyone
+    // notices.
+    const target = t < 0 ? 0
+      : t < 0.28 ? t / 0.28
+        : t < 0.52 ? 1
+          : Math.max(0, 1 - (t - 0.52) / 0.34);
+    this.vmReloadPose = damp(this.vmReloadPose, clamp(target, 0, 1), 16, dt);
+    const k = this.vmReloadPose;
+    left.position.lerpVectors(h.userData.leftRest, h.userData.leftMag, k);
+    // The wrist rolls as it comes off the rail; a hand that translates without
+    // rotating reads as a sprite being slid around. Rotations are set from the
+    // stored rest pose rather than accumulated, or the hand would keep turning
+    // for as long as the player kept reloading.
+    // rx is the roll about whatever the hand is gripping, so unwinding it is
+    // literally the hand coming off the rail; ry swings it inboard toward the
+    // well. Set from the stored rest pose rather than accumulated, or the hand
+    // would keep turning for as long as the player kept reloading.
+    const r0 = h.userData.leftRestRot;
+    left.rotation.set(r0.x - k * 0.75, r0.y + k * 0.45, r0.z);
   }
 
   /**

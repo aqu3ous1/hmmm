@@ -1280,16 +1280,30 @@ const ENEMY_BUILDERS = {
 const _shadeTmp = new THREE.Color();
 function shadeHex(hex, k) { return _shadeTmp.setHex(hex).multiplyScalar(k).getHex(); }
 
-/** A soft contact shadow, so nothing looks like it is hovering over the floor. */
+// A soft contact shadow, so nothing looks like it is hovering over the floor.
+//
+// One unit circle and one material for every contact shadow in the game.
+// Minting a fresh CircleGeometry and MeshBasicMaterial per enemy meant a wave
+// of twenty spawns allocated forty GPU resources that were identical apart
+// from a radius — and every one of them had to be disposed on the way out.
+// Scaling a shared unit circle is the same picture for none of that.
+const _SHADOW_GEO = new THREE.CircleGeometry(1, 16);
+_SHADOW_GEO.userData.shared = true;   // ditto — disposeTree checks this
+const _SHADOW_MAT = new THREE.MeshBasicMaterial({
+  color: 0x000000, transparent: true, opacity: 0.34, depthWrite: false,
+});
+_SHADOW_MAT.userData.shared = true;   // so disposeTree leaves it alone
+
 function blobShadow(radius) {
-  const geo = new THREE.CircleGeometry(radius, 16);
-  const mat = new THREE.MeshBasicMaterial({
-    color: 0x000000, transparent: true, opacity: 0.34, depthWrite: false,
-  });
-  const m = new THREE.Mesh(geo, mat);
+  const m = new THREE.Mesh(_SHADOW_GEO, _SHADOW_MAT);
   m.rotation.x = -Math.PI / 2;
   m.position.y = 0.03;
+  m.scale.setScalar(radius);
   m.renderOrder = -1;
+  // Tagged so a corpse can drop it. A corpse fades by writing opacity across
+  // every material in its rig, and with the shadow material now shared that
+  // write would fade the shadow under every living enemy on the floor.
+  m.userData.shadow = true;
   return m;
 }
 

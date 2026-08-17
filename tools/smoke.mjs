@@ -470,7 +470,28 @@ try {
         if (!st) break;
         pressAt(st.pos);
         g.kind.update(g, 1 / 60);
-        if (g.objective.done === before && kind === 'nodes') break;  // needs waves
+        if (g.objective.done === before && kind === 'nodes') {
+          // Defend the node through its waves for real.
+          //
+          // This used to give up here and let forceObjective() paper over it,
+          // which meant the one objective the player meets on both the first
+          // floor and the last was the only one never exercised: the wave
+          // counter, the onKill bookkeeping and completed() were all unrun.
+          // Spin the station's own update, killing whatever it spawns.
+          // Kill through _killEnemy, not by flipping `alive`. Flipping the flag
+          // left the bodies in g.enemies, which hit the thirty-enemy spawn cap
+          // inside the objective, which stopped it spawning, which meant the
+          // wave could never end — a deadlock the harness sat in for twenty
+          // thousand frames before giving up on floor two of three.
+          let spins = 0;
+          while (st.state !== 'done' && spins++ < 20000) {
+            g.now += 1 / 60;
+            g.kind.update(g, 1 / 60);
+            for (const e of st.waveEnemies.slice()) g._killEnemy(e, null, null);
+          }
+          if (st.state !== 'done') break;
+          continue;
+        }
       }
 
       g.opts.tapHold = prevTap;
@@ -482,11 +503,9 @@ try {
     });
     if (objResult.played) {
       const ok = objResult.done >= objResult.total;
-      // `nodes` legitimately needs wave defence, which the combat pass drives.
-      const waveDriven = objResult.kind === 'nodes';
       console.log(`   objective ${objResult.kind}: ${objResult.done}/${objResult.total}`
-        + `${ok ? '' : waveDriven ? ' (wave-driven, force-completing)' : ' — NOT COMPLETABLE'}`);
-      if (!ok && !waveDriven) {
+        + `${ok ? '' : ' — NOT COMPLETABLE'}`);
+      if (!ok) {
         errors.push(`floor ${f} objective "${objResult.kind}" could not be completed `
           + `through the real interaction path (${objResult.done}/${objResult.total})`);
       }

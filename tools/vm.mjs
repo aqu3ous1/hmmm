@@ -7,7 +7,8 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 
-const WEAPON = process.argv[2] || 'ak47';
+const WEAPONS_ARG = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const LIST = WEAPONS_ARG.length ? WEAPONS_ARG : ['ak47'];
 const PORT = 8175;
 mkdirSync('tools/shots', { recursive: true });
 
@@ -28,28 +29,33 @@ await page.waitForFunction(() => document.getElementById('floorCardLoad').textCo
 await page.mouse.click(512, 300);
 await page.waitForTimeout(400);
 
-await page.evaluate(async (id) => {
-  const g = window.game;
+for (const WEAPON of LIST) {
+  await page.evaluate(async (id) => {
+    const g = window.game;
     // Probes want the game, not the film.
     g.cine?.cancel();
     g.hud.setCinematic(false);
-  const W = await import('/src/combat/weapons.js');
-  g.hud.hide();
-  g.level.group.visible = false;
-  g.propGroup.visible = false;
-  for (const c of g.chests) c.group.visible = false;
-  for (const e of g.enemies) e.mesh.visible = false;
-  g.scene.fog.density = 0.0001;
-  g.player.slots[0] = W.makeWeapon(id);
-  g.player.activeSlot = 0;
-  g._refreshPairing();
-  for (let i = 0; i < 30; i++) { g.now += 1 / 60; g.update(1 / 60); g.input.endFrame(); }
-}, WEAPON);
+    const W = await import('/src/combat/weapons.js');
+    g.hud.hide();
+    g.level.group.visible = false;
+    g.propGroup.visible = false;
+    for (const c of g.chests) c.group.visible = false;
+    for (const e of g.enemies) e.mesh.visible = false;
+    g.scene.fog.density = 0.0001;
+    g.player.slots[0] = W.makeWeapon(id);
+    g.player.activeSlot = 0;
+    g._refreshPairing();
+    // Force a rebuild: the viewmodel only reloads when the weapon changes, and
+    // swapping the slot in place does not trip that check.
+    g._setViewmodel(g.player.weapon);
+    for (let i = 0; i < 30; i++) { g.now += 1 / 60; g.update(1 / 60); g.input.endFrame(); }
+  }, WEAPON);
 
-await page.waitForTimeout(700);
-const out = `tools/shots/vm-${WEAPON}.png`;
-await page.screenshot({ path: out });
-console.log('wrote', out);
+  await page.waitForTimeout(500);
+  const out = `tools/shots/vm-${WEAPON}.png`;
+  await page.screenshot({ path: out });
+  console.log('wrote', out);
+}
 
 await browser.close();
 server.kill();

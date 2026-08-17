@@ -174,6 +174,13 @@ export const UNIT = {
   bolt: new THREE.CylinderGeometry(0.5, 0.5, 1, 6),
 };
 
+// The primitives are a cache: everything that uses one clones it first, so no
+// mesh should ever hold one directly. Flagging them stops disposeTree from
+// freeing the whole library if something ever does — the particle system
+// already shares UNIT.box across its beam pool, and one stray disposal there
+// would blank every box in the game with no obvious cause.
+for (const geo of Object.values(UNIT)) geo.userData.shared = true;
+
 /** A unit cube with its corners cut — reads as machined rather than extruded. */
 function bevelledBox(b) {
   const g = new THREE.BoxGeometry(1, 1, 1, 1, 1, 1);
@@ -318,7 +325,11 @@ export function unshareMaterials(root) {
 /** Dispose everything under a node so floor transitions don't leak GPU memory. */
 export function disposeTree(root) {
   root.traverse((o) => {
-    if (o.geometry) o.geometry.dispose();
+    // Geometry gets the same shared flag as materials. It did not before, and
+    // the moment anything started reusing one buffer across instances — the
+    // contact shadow under every enemy — the first corpse disposed it and every
+    // other enemy's shadow vanished.
+    if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose();
     if (o.material) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) {
