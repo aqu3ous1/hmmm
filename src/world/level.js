@@ -32,6 +32,35 @@ function albedo(hex, k = 2.2) {
   return c.multiplyScalar(Math.max(1, scale)).getHex();
 }
 
+const _hsl = { h: 0, s: 0, l: 0 };
+
+/**
+ * Albedo for a *structural* surface — concrete, plate, panel, ceiling.
+ *
+ * The palette hue belongs on the trim, the emissives and the lights. When it is
+ * also painted onto the concrete, the ambient light, the hemisphere, the
+ * fixtures, the reflections and the colour grade all multiply the same hue
+ * together and the whole frame turns into one flat wash: the Server Farm went
+ * green from floor to ceiling and nothing in it read as a different material.
+ * So structure keeps only a trace of hue and gets its brightness set outright —
+ * value separation between floor, wall and ceiling is what actually makes a
+ * room legible, and it can only exist if those three aren't the same colour.
+ */
+function structural(hex, value, keep = 0.2) {
+  const c = _shadeColor.setHex(hex);
+  c.getHSL(_hsl);
+  c.setHSL(_hsl.h, Math.min(1, _hsl.s) * keep, value);
+  return c.getHex();
+}
+
+/** Physically-shaded surface material. `rough`/`metal` are what separate
+ *  painted steel from bare metal from rubber once the env map is bound. */
+function surface(color, { rough = 0.9, metal = 0.04, ...extra } = {}) {
+  return new THREE.MeshStandardMaterial({
+    color, roughness: rough, metalness: metal, envMapIntensity: 0.6, ...extra,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
@@ -409,9 +438,19 @@ export class Level {
     const open = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID && grid[x + z * GRID] === 0;
 
     const floorGeo = [], ceilGeo = [], wallGeo = [], trimGeo = [], decalGeo = [];
+    const seamGeo = [], plateGeo = [];
 
     const wx = (cx) => this.cellToWorldX(cx);
     const wz = (cz) => this.cellToWorldZ(cz);
+
+    // A recessed seam between floor plates. Real floors are laid in sections,
+    // and the dark line where two sections meet is most of what tells you the
+    // floor has a scale at all — without it every room is one infinite surface.
+    const seam = (x0, z0, x1, z1, w) => seamGeo.push(quad(
+      [x0 - w, 0.012, z1 + w], [x1 + w, 0.012, z1 + w],
+      [x1 + w, 0.012, z0 - w], [x0 - w, 0.012, z0 - w],
+      [1, 1, 1, 1],
+    ));
 
     for (let cz = 0; cz < GRID; cz++) {
       for (let cx = 0; cx < GRID; cx++) {
@@ -429,6 +468,20 @@ export class Level {
             [x0, 0, z1], [x1, 0, z1], [x1, 0, z0], [x0, 0, z0],
             [d * v, c * v, b * v, a * v],
           ));
+
+          // Plate seams every third cell, and a raised diamond-plate insert on
+          // a scattered few. Two cheap passes, and the floor stops being a
+          // single continuous colour the eye slides straight off.
+          if (cx % 3 === 0) seam(x0, z0, x0, z1, 0.035);
+          if (cz % 3 === 0) seam(x0, z0, x1, z0, 0.035);
+          if (this._cellHash(cx, cz, 21) > 0.86) {
+            const pv = 0.9 + this._cellHash(cx, cz, 23) * 0.2;
+            plateGeo.push(quad(
+              [x0 + 0.18, 0.026, z1 - 0.18], [x1 - 0.18, 0.026, z1 - 0.18],
+              [x1 - 0.18, 0.026, z0 + 0.18], [x0 + 0.18, 0.026, z0 + 0.18],
+              [d * pv, c * pv, b * pv, a * pv],
+            ));
+          }
 
           // --- ceiling tile: same trick, normal pointing down ---
           const cv = 0.5 + this._cellHash(cx, cz, 7) * 0.1;
@@ -481,6 +534,29 @@ export class Level {
             ));
           }
 
+          // Panel joints. A wall built out of bolted sections catches light at
+          // every seam; one flat quad from skirting to cornice never will.
+          const jx = dx * 0.014, jz = dz * 0.014;
+          const jointQuad = (yLo, yHi, t0, t1) => {
+            const lerp3 = (t) => [p0[0] + (p1[0] - p0[0]) * t + jx, 0, p0[2] + (p1[2] - p0[2]) * t + jz];
+            const q0 = lerp3(t0), q1 = lerp3(t1);
+            seamGeo.push(quad(
+              [q0[0], yLo, q0[2]], [q1[0], yLo, q1[2]],
+              [q1[0], yHi, q1[2]], [q0[0], yHi, q0[2]],
+              [ca, cb, cb, ca],
+            ));
+          };
+          jointQuad(0.42, WALL_H - 0.9, 0.02, 0.06);
+          jointQuad(0.42, WALL_H - 0.9, 0.94, 0.98);
+          jointQuad(2.62, 2.70, 0.06, 0.94);
+          // Occasional vent grille, so the walls aren't uniformly panelled.
+          if (this._cellHash(cx, cz, dx * 31 + dz * 17) > 0.8) {
+            for (let g = 0; g < 5; g++) {
+              const yy = 1.15 + g * 0.17;
+              jointQuad(yy, yy + 0.1, 0.28, 0.72);
+            }
+          }
+
           // Emissive skirting and a cornice line.
           const nx = dx * 0.012, nz = dz * 0.012;
           const strip = (yLo, yHi, shade) => trimGeo.push(quad(
@@ -515,26 +591,37 @@ export class Level {
     }
 
     const wire = !!pal.wireframe;
+    // Value separation, set outright rather than inherited from the palette:
+    // ceiling darkest, floor mid, walls lightest. That ordering is what lets
+    // you read the shape of a room in one glance.
     if (floorGeo.length) {
-      this.group.add(new THREE.Mesh(mergeGeometries(floorGeo), new THREE.MeshLambertMaterial({
-        color: albedo(pal.floor, 2.4), vertexColors: true,
+      this.group.add(new THREE.Mesh(mergeGeometries(floorGeo), surface(structural(pal.floor, 0.082), {
+        vertexColors: true, rough: 0.82, metal: 0.12,
+      })));
+    }
+    if (plateGeo.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(plateGeo), surface(structural(pal.floor, 0.105, 0.14), {
+        vertexColors: true, rough: 0.58, metal: 0.42,
       })));
     }
     if (ceilGeo.length) {
-      this.group.add(new THREE.Mesh(mergeGeometries(ceilGeo), new THREE.MeshLambertMaterial({
-        color: albedo(pal.ceiling, 2.0), vertexColors: true,
+      this.group.add(new THREE.Mesh(mergeGeometries(ceilGeo), surface(structural(pal.ceiling, 0.062), {
+        vertexColors: true, rough: 0.95, metal: 0.02,
       })));
     }
     if (wallGeo.length) {
       const mat = wire
         ? new THREE.MeshBasicMaterial({ color: pal.wall, wireframe: true, vertexColors: true })
-        : new THREE.MeshLambertMaterial({
-          color: albedo(pal.wall, 2.6), vertexColors: true,
-        });
+        : surface(structural(pal.wall, 0.165), { vertexColors: true, rough: 0.74, metal: 0.16 });
       const mesh = new THREE.Mesh(mergeGeometries(wallGeo), mat);
       mesh.frustumCulled = false;
       this.group.add(mesh);
       this.wallMesh = mesh;
+    }
+    if (seamGeo.length) {
+      this.group.add(new THREE.Mesh(mergeGeometries(seamGeo), surface(structural(pal.wall, 0.03), {
+        vertexColors: true, rough: 0.95, metal: 0.2,
+      })));
     }
     if (trimGeo.length) {
       this.group.add(new THREE.Mesh(mergeGeometries(trimGeo), new THREE.MeshBasicMaterial({
@@ -631,8 +718,9 @@ export class Level {
     }
 
     if (solidParts.length) {
-      this.group.add(new THREE.Mesh(mergeGeometries(solidParts), new THREE.MeshLambertMaterial({
-        color: albedo(pal.wallAccent, 2.0), vertexColors: true, flatShading: true,
+      this.group.add(new THREE.Mesh(mergeGeometries(solidParts), new THREE.MeshStandardMaterial({
+        color: structural(pal.wallAccent, 0.2, 0.3), vertexColors: true, flatShading: true,
+        roughness: 0.44, metalness: 0.55, envMapIntensity: 0.9,
       })));
     }
     if (glowParts.length) {
@@ -668,8 +756,9 @@ export class Level {
       this.group.add(new THREE.Mesh(mergeGeometries(panels), new THREE.MeshBasicMaterial({
         color: pal.light, transparent: true, opacity: 0.95,
       })));
-      this.group.add(new THREE.Mesh(mergeGeometries(housings), new THREE.MeshLambertMaterial({
-        color: albedo(pal.wallAccent, 2.0), vertexColors: true, flatShading: true,
+      this.group.add(new THREE.Mesh(mergeGeometries(housings), new THREE.MeshStandardMaterial({
+        color: structural(pal.wallAccent, 0.22, 0.24), vertexColors: true, flatShading: true,
+        roughness: 0.36, metalness: 0.68, envMapIntensity: 1.0,
       })));
     }
   }
@@ -877,14 +966,16 @@ export class Level {
     }
 
     const add = (arr, mat) => { if (arr.length) this.decorGroup.add(new THREE.Mesh(mergeGeometries(arr), mat)); };
-    add(body, new THREE.MeshLambertMaterial({
-      color: albedo(pal.wallAccent, 2.0), vertexColors: true, flatShading: true,
+    // Props are where the floor's colour is allowed to live: painted equipment
+    // against neutral concrete, rather than concrete that happens to be green.
+    add(body, surface(structural(pal.wallAccent, 0.19, 0.55), {
+      vertexColors: true, flatShading: true, rough: 0.55, metal: 0.4, envMapIntensity: 0.9,
     }));
-    add(accent, new THREE.MeshLambertMaterial({
-      color: pal.trim, vertexColors: true, flatShading: true,
+    add(accent, surface(structural(pal.trim, 0.3, 0.75), {
+      vertexColors: true, flatShading: true, rough: 0.3, metal: 0.85, envMapIntensity: 1.2,
     }));
-    add(dark, new THREE.MeshLambertMaterial({
-      color: albedo(pal.wall, 1.6), vertexColors: true, flatShading: true,
+    add(dark, surface(structural(pal.wall, 0.07, 0.35), {
+      vertexColors: true, flatShading: true, rough: 0.86, metal: 0.25, envMapIntensity: 0.6,
     }));
     add(glow, new THREE.MeshBasicMaterial({
       color: pal.emissive, vertexColors: true, transparent: true, opacity: 0.92,

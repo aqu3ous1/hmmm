@@ -127,51 +127,112 @@ export function xform(geo, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1
 export const UNIT = {
   box: new THREE.BoxGeometry(1, 1, 1),
   plane: new THREE.PlaneGeometry(1, 1),
-  sphere: new THREE.SphereGeometry(0.5, 12, 8),
-  lowSphere: new THREE.SphereGeometry(0.5, 8, 6),
-  cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 12),
-  lowCyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 8),
-  cone: new THREE.ConeGeometry(0.5, 1, 10),
-  torus: new THREE.TorusGeometry(0.5, 0.14, 8, 16),
+  sphere: new THREE.SphereGeometry(0.5, 16, 12),
+  lowSphere: new THREE.SphereGeometry(0.5, 10, 7),
+  cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
+  lowCyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 10),
+  cone: new THREE.ConeGeometry(0.5, 1, 12),
+  torus: new THREE.TorusGeometry(0.5, 0.14, 10, 20),
   icosa: new THREE.IcosahedronGeometry(0.5, 0),
   octa: new THREE.OctahedronGeometry(0.5, 0),
   tetra: new THREE.TetrahedronGeometry(0.5, 0),
+
+  // Detail primitives. A model reads as "made" rather than "blocked out" mostly
+  // because of chamfers, panel gaps and fasteners, so those get first-class
+  // shapes instead of being faked with thin boxes.
+  bevelBox: bevelledBox(0.09),
+  slab: bevelledBox(0.045),
+  capsule: THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.5, 1, 5, 12) : new THREE.SphereGeometry(0.5, 12, 8),
+  ring: new THREE.TorusGeometry(0.5, 0.06, 8, 22),
+  disc: new THREE.CylinderGeometry(0.5, 0.5, 1, 22),
+  hex: new THREE.CylinderGeometry(0.5, 0.5, 1, 6),
+  pipe: new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, true),
+  taper: new THREE.CylinderGeometry(0.5, 0.32, 1, 12),
+  wedge: wedgeGeometry(),
+  bolt: new THREE.CylinderGeometry(0.5, 0.5, 1, 6),
 };
 
-/** Build a mesh from a list of {geo, color, ...transform} parts, grouped by colour. */
-export function assemble(parts, { material = 'lambert', flatShading = true } = {}) {
-  const group = new THREE.Group();
-  const byColor = new Map();
-  for (const p of parts) {
-    const key = `${p.color}|${p.emissive || 0}|${p.opacity ?? 1}|${p.basic ? 1 : 0}`;
-    if (!byColor.has(key)) byColor.set(key, { parts: [], spec: p });
-    byColor.get(key).parts.push(p);
+/** A unit cube with its corners cut — reads as machined rather than extruded. */
+function bevelledBox(b) {
+  const g = new THREE.BoxGeometry(1, 1, 1, 1, 1, 1);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    // Pull each corner vertex in slightly along all three axes.
+    pos.setXYZ(i,
+      pos.getX(i) * (1 - b * 2) + Math.sign(pos.getX(i)) * b,
+      pos.getY(i) * (1 - b * 2) + Math.sign(pos.getY(i)) * b,
+      pos.getZ(i) * (1 - b * 2) + Math.sign(pos.getZ(i)) * b);
   }
-  for (const { parts: ps, spec } of byColor.values()) {
-    const geos = ps.map((p) => xform(p.geo || UNIT.box, p));
-    const merged = mergeGeometries(geos);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Right-triangular prism, for tapered armour plates and gun bodies. */
+function wedgeGeometry() {
+  const g = new THREE.BufferGeometry();
+  const v = [
+    [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5],
+    [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5],
+  ];
+  const tri = [
+    [0, 1, 2], [3, 5, 4], [0, 2, 5], [0, 5, 3],
+    [1, 4, 5], [1, 5, 2], [0, 3, 4], [0, 4, 1],
+  ];
+  const pos = [];
+  for (const [a, b2, c] of tri) pos.push(...v[a], ...v[b2], ...v[c]);
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Build a mesh from a list of `{ geo, color, ...transform }` parts, batching by
+ * material so a 120-piece model is still only a handful of draw calls.
+ *
+ * Surfaces are physically shaded by default. `metal` and `rough` are what make
+ * a chrome pauldron, a rubber boot and a wet blob look like different substances
+ * instead of three differently-coloured boxes — combine them with the scene's
+ * environment map (see render/env.js) and the highlights do most of the work.
+ *
+ * Per-part options:
+ *   metal 0..1   rough 0..1   emissive hex   glow (emissive intensity)
+ *   opacity 0..1 basic (unlit) smooth (per-vertex normals instead of flat)
+ */
+export function assemble(parts, { flatShading = true } = {}) {
+  const group = new THREE.Group();
+  const batches = new Map();
+  for (const p of parts) {
+    const key = [
+      p.color, p.emissive || 0, p.glow ?? 1, p.opacity ?? 1,
+      p.basic ? 1 : 0, p.metal ?? 0, p.rough ?? 0.8, p.smooth ? 1 : 0,
+    ].join('|');
+    if (!batches.has(key)) batches.set(key, { parts: [], spec: p });
+    batches.get(key).parts.push(p);
+  }
+  for (const { parts: ps, spec } of batches.values()) {
+    const merged = mergeGeometries(ps.map((p) => xform(p.geo || UNIT.box, p)));
+    if (spec.smooth) merged.computeVertexNormals();
+    const transparent = (spec.opacity ?? 1) < 1;
     let mat;
     if (spec.basic) {
       mat = new THREE.MeshBasicMaterial({
-        color: spec.color,
-        transparent: (spec.opacity ?? 1) < 1,
-        opacity: spec.opacity ?? 1,
-      });
-    } else if (material === 'phong') {
-      mat = new THREE.MeshPhongMaterial({
-        color: spec.color, emissive: spec.emissive || 0x000000,
-        flatShading, shininess: 40,
-        transparent: (spec.opacity ?? 1) < 1, opacity: spec.opacity ?? 1,
+        color: spec.color, transparent, opacity: spec.opacity ?? 1,
+        toneMapped: spec.toneMapped !== false,
       });
     } else {
-      mat = new THREE.MeshLambertMaterial({
-        color: spec.color, emissive: spec.emissive || 0x000000,
-        flatShading,
-        transparent: (spec.opacity ?? 1) < 1, opacity: spec.opacity ?? 1,
+      mat = new THREE.MeshStandardMaterial({
+        color: spec.color,
+        emissive: spec.emissive || 0x000000,
+        emissiveIntensity: spec.glow ?? 1,
+        metalness: spec.metal ?? 0,
+        roughness: spec.rough ?? 0.8,
+        flatShading: spec.smooth ? false : flatShading,
+        transparent, opacity: spec.opacity ?? 1,
+        envMapIntensity: spec.envIntensity ?? 1,
       });
     }
-    const mesh = new THREE.Mesh(merged, mat);
-    group.add(mesh);
+    group.add(new THREE.Mesh(merged, mat));
   }
   return group;
 }

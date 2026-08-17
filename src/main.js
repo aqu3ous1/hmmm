@@ -25,12 +25,14 @@ import { Chest, WeaponIconCache } from './props/chest.js';
 import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/models.js';
 
 import { PostFX } from './render/postfx.js';
+import { EnvironmentBuilder } from './render/env.js';
 import { BUILD, BUILD_NAME, BUILD_DATE } from './version.js';
 import { HUD, buildCodex, renderLoadoutDetail } from './ui/hud.js';
 import { STORY, AmbientPool } from './story/script.js';
 
 const MAX_ENEMIES = 30;
 const $ = (id) => document.getElementById(id);
+const _hslTmp = { h: 0, s: 0, l: 0 };
 
 class Game {
   constructor() {
@@ -103,6 +105,9 @@ class Game {
     // tonemapping and the sRGB encode.
     this.renderer.toneMapping = THREE.NoToneMapping;
     this.post = new PostFX(this.renderer);
+    // Image-based lighting: without something to reflect, physically shaded
+    // materials look worse than Lambert, not better.
+    this.env = new EnvironmentBuilder(this.renderer);
   }
 
   _initWorldScene() {
@@ -113,17 +118,17 @@ class Game {
     // three.js dropped the legacy PI light scaling in r155, so every intensity
     // here is roughly PI times what the old default would have been.
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-    this.hemi = new THREE.HemisphereLight(0x9fc4ff, 0x121820, 0.9);
+    this.hemi = new THREE.HemisphereLight(0x9fc4ff, 0x121820, 0.42);
     this.scene.add(this.ambientLight, this.hemi);
 
     // Torch that follows the player — the primary readable light source.
-    this.torch = new THREE.PointLight(0xfff0d8, 3.6, 19, 1.15);
+    this.torch = new THREE.PointLight(0xfff0d8, 2.4, 15, 1.5);
     this.scene.add(this.torch);
 
     // A small pool of static lights snapped to the nearest ceiling panels.
     this.roomLights = [];
     for (let i = 0; i < 7; i++) {
-      const l = new THREE.PointLight(0xffffff, 0, 20, 1.2);
+      const l = new THREE.PointLight(0xffffff, 0, 15, 1.7);
       l.visible = false;
       this.scene.add(l);
       this.roomLights.push(l);
@@ -313,20 +318,36 @@ class Game {
     const pal = cfg.palette;
     this.scene.fog = new THREE.FogExp2(pal.fog, pal.fogDensity);
     this.renderer.setClearColor(pal.fog, 1);
-    this.ambientLight.intensity = cfg.ambient * 2.0;
-    this.hemi.color.setHex(pal.light);
-    this.hemi.groundColor.setHex(pal.floor);
-    this.hemi.intensity = 0.9;
+    this.ambientLight.intensity = cfg.ambient * 1.05;
+    // Complementary key/fill. The floor's colour belongs to the *fixtures* —
+    // they are the thing emitting it. The ambient and hemisphere sit on the
+    // opposite side of the wheel so a surface is warm where the lamp reaches it
+    // and cool where it doesn't. Tinting every light the same hue is what made
+    // the Server Farm one flat green sheet: with nothing to contrast against,
+    // a colour stops reading as light and starts reading as paint.
+    const keyC = new THREE.Color(pal.light);
+    const comp = new THREE.Color().setHSL(
+      (keyC.getHSL(_hslTmp).h + 0.5) % 1, Math.min(0.42, _hslTmp.s * 0.7), 0.62);
+    this.ambientLight.color.copy(new THREE.Color(0xffffff).lerp(comp, 0.5));
+    this.hemi.color.copy(comp);
+    this.hemi.groundColor.copy(new THREE.Color(0x14171c));
+    this.hemi.intensity = 0.5;
+    const envTex = this.env.build(pal);
+    this.scene.environment = envTex;
+    this.vmScene.environment = envTex;
     this.post.setGrade({
       tint: pal.light,
       bloom: pal.bloom ?? 0.7,
       exposure: pal.exposure ?? 1.08,
-      saturation: pal.saturation ?? 1.1,
-      contrast: pal.contrast ?? 1.06,
+      saturation: pal.saturation ?? 1.04,
+      contrast: pal.contrast ?? 1.2,
       vignette: pal.vignette ?? 0.52,
     });
-    this.torch.color.setHex(0xfff0d8);
-    for (const l of this.roomLights) l.color.setHex(pal.light);
+    this.torch.color.setHex(0xffeed6);
+    // The fixtures carry the palette at full strength — they are the only
+    // thing in the room that is actually the floor's colour.
+    const fixture = new THREE.Color(0xffffff).lerp(keyC, 0.7);
+    for (const l of this.roomLights) l.color.copy(fixture);
 
     this.iconCache = new WeaponIconCache(this.scene);
 
@@ -1689,7 +1710,7 @@ class Game {
       this.chestLight.dispose?.();
       this.chestLight = null;
     }
-    this._lightRamp = { t: 0, ambient: cfg.ambient * 2.0, hemi: 0.9, fog: cfg.palette.fogDensity };
+    this._lightRamp = { t: 0, ambient: cfg.ambient * 1.05, hemi: 0.42, fog: cfg.palette.fogDensity };
     this._queue(STORY.welcome, true);
     this.hud.banner('COLD STORAGE', 'SUBLEVEL B1', 3.4);
     this._populate(cfg, this.rng, 7);
@@ -1947,13 +1968,69 @@ class Game {
       this.vmHolder.position.z -= w.charge * 0.08;
       this.vmHolder.rotation.x -= w.charge * 0.14;
     }
+    this._animateWeaponParts(w, dt);
+  }
+
+  /**
+   * Drive a weapon's moving parts. The whole gun rocking backwards reads as a
+   * camera effect; a slide travelling inside a frame that stays put is what
+   * actually reads as a firearm working, and it is the same one number.
+   */
+  _animateWeaponParts(w, dt) {
+    const anim = this.vmModel?.userData?.anim;
+    if (!anim) return;
+    const kick = this.vmKick;
+
+    if (anim.slide) {
+      // Cycles back on the kick and returns under spring.
+      anim.slide.position.z = -kick * (anim.slide.userData.recoil || 0.06) * 9;
+    }
+    if (anim.bolt) {
+      anim.bolt.position.z = -kick * 0.09 * 9;
+      anim.bolt.position.x = kick * 0.01;
+    }
+    if (anim.spin) {
+      // The Behemoth spools up while firing and coasts down after.
+      this._vmSpin = (this._vmSpin || 0) + dt * (0.6 + kick * 90) * 6;
+      anim.spin.rotation.z = this._vmSpin % TAU;
+    }
+    if (anim.coil) {
+      this._vmCoil = (this._vmCoil || 0) + dt * (1.4 + (w?.charge || 0) * 8);
+      anim.coil.rotation.z = this._vmCoil % TAU;
+      const pulse = 1 + Math.sin(this._vmCoil * 3) * 0.04;
+      anim.coil.scale.set(pulse, pulse, 1);
+    }
+    if (anim.discs) {
+      this._vmDisc = (this._vmDisc || 0) + dt * (2 + kick * 120);
+      anim.discs.rotation.x = this._vmDisc % TAU;
+    }
+    if (anim.reel) {
+      this._vmReel = (this._vmReel || 0) + dt * kick * 60;
+      anim.reel.rotation.x = this._vmReel % TAU;
+    }
+    if (anim.mag) {
+      // Drops out and slaps back in over the reload.
+      let drop = 0;
+      if (w?.reloading) {
+        const e = this.runtime.eff(w);
+        const t = 1 - clamp((w.reloadEnd - this.now) / Math.max(0.05, e.reload), 0, 1);
+        drop = t < 0.45 ? (t / 0.45) : Math.max(0, 1 - (t - 0.45) / 0.4);
+      }
+      anim.mag.position.y = -drop * 0.55;
+      anim.mag.rotation.x = drop * 0.5;
+    }
+    if (anim.flicker) {
+      // The Null Pointer's ghost half is only sometimes there.
+      const on = Math.sin(this.now * 7.3) + Math.sin(this.now * 3.1) > -0.4;
+      anim.flicker.visible = on;
+    }
   }
 
   // ---- lighting ----
 
   _updateLights(dt) {
     this._lightTimer -= dt;
-    this.torch.intensity = damp(this.torch.intensity, this.prologueActive ? 0.6 : 3.6, 1.6, dt);
+    this.torch.intensity = damp(this.torch.intensity, this.prologueActive ? 0.6 : 2.4, 1.6, dt);
 
     // Bring the room up after the cold open resolves.
     if (this._lightRamp) {
@@ -1983,7 +2060,7 @@ class Game {
       if (!n) { l.visible = false; l.intensity = 0; continue; }
       l.position.set(n.pt.x, n.pt.y, n.pt.z);
       l.visible = true;
-      l.intensity = 3.4;
+      l.intensity = 2.6;
     }
   }
 

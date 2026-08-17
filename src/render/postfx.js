@@ -185,7 +185,7 @@ export class PostFX {
 
     this.brightMat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: BRIGHT_FRAG, depthTest: false, depthWrite: false,
-      uniforms: { tDiffuse: { value: null }, threshold: { value: 0.95 }, softKnee: { value: 0.6 } },
+      uniforms: { tDiffuse: { value: null }, threshold: { value: 1.05 }, softKnee: { value: 0.55 } },
     });
     this.blurMat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: BLUR_FRAG, depthTest: false, depthWrite: false,
