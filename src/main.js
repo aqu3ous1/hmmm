@@ -2629,8 +2629,8 @@ class Game {
     // Base rest pose, then additive motion.
     // The models are pre-normalised in _setViewmodel, so these are purely
     // about where the hands sit, not about how big any particular gun is.
-    const baseX = melee ? 0.22 : 0.24;
-    const baseY = melee ? -0.27 : -0.3;
+    const baseX = melee ? 0.2 : 0.22;
+    const baseY = melee ? -0.24 : -0.26;
     const baseZ = melee ? -0.62 : -0.68;
     this.vmHolder.scale.setScalar(0.6);
 

@@ -1209,34 +1209,72 @@ const ENEMY_BUILDERS = {
   glitchling(b, h) {
     const legH = h * 0.44, torso = h * 0.32;
     const headY = legH + torso + 0.24;
-    // Deliberately misaligned slabs with chromatic ghosts either side.
-    const ghostPair = (geo, o) => [
-      emit(geo, 0xff2ea6, { ...o, x: (o.x || 0) - 0.07, opacity: 0.45 }),
-      emit(geo, 0x2effe0, { ...o, x: (o.x || 0) + 0.07, opacity: 0.45 }),
+    const MAG = 0xff2ea6, CYN = 0x2effe0;
+    // A person the renderer keeps getting wrong. Every solid piece has two
+    // chromatic ghosts offset either side of it, the parts do not line up with
+    // each other, and there are bands of raw scanline where geometry should be.
+    // The trick is that it has to still read as a *person* underneath — a pile
+    // of coloured slabs is noise, and noise is not frightening.
+    const ghostPair = (geo, o, amt = 0.07) => [
+      emit(geo, MAG, { ...o, x: (o.x || 0) - amt, opacity: 0.42 }),
+      emit(geo, CYN, { ...o, x: (o.x || 0) + amt, opacity: 0.42 }),
     ];
+    const shard = (x, y, z, sx, sy, rz) => emit(B, Math.random() > 0.5 ? MAG : CYN,
+      { x, y, z, rz, sx, sy, sz: 0.02, opacity: 0.7 });
     return {
       pivot: legH, headY, headR: 0.2, glitch: true,
       upper: [
-        part(B, b.body, { y: legH + torso * 0.62, sx: 0.5, sy: torso * 0.5, sz: 0.3 }),
-        part(B, b.head, { x: 0.08, y: legH + torso * 0.24, rz: 0.2, sx: 0.44, sy: torso * 0.36, sz: 0.28 }),
-        ...ghostPair(B, { y: legH + torso * 0.62, sx: 0.5, sy: torso * 0.5, sz: 0.3 }),
-        // head floats detached above the neck
-        part(B, b.head, { y: headY, rz: 0.12, sx: 0.32, sy: 0.3, sz: 0.3 }),
-        ...ghostPair(B, { y: headY, rz: 0.12, sx: 0.32, sy: 0.3, sz: 0.3 }),
-        emit(B, b.eye, { y: headY, z: 0.16, sx: 0.24, sy: 0.06, sz: 0.02 }),
-        // fragmented limbs, floating apart
-        part(B, b.body, { x: 0.36, y: legH + torso * 0.66, rz: 0.3, sx: 0.12, sy: torso * 0.42, sz: 0.12 }),
-        part(B, b.body, { x: 0.44, y: legH + torso * 0.2, rz: -0.2, sx: 0.11, sy: torso * 0.36, sz: 0.11 }),
-        part(B, b.body, { x: -0.38, y: legH + torso * 0.5, rz: -0.4, sx: 0.12, sy: torso * 0.5, sz: 0.12 }),
-        ...[0, 1, 2].map((i) => emit(B, i % 2 ? 0x2effe0 : 0xff2ea6, {
-          x: (i - 1) * 0.4, y: legH + torso * (0.3 + i * 0.3), z: 0.22,
-          sx: 0.3, sy: 0.03, sz: 0.02, opacity: 0.8,
+        // Torso, in three slabs that have slipped out of alignment.
+        part(UNIT.bevelBox, b.body, { y: legH + torso * 0.74, sx: 0.5, sy: torso * 0.3, sz: 0.3 }),
+        part(UNIT.bevelBox, b.head, { x: 0.09, y: legH + torso * 0.5, rz: 0.06, sx: 0.46, sy: torso * 0.26, sz: 0.29 }),
+        part(UNIT.bevelBox, b.body, { x: -0.07, y: legH + torso * 0.24, rz: -0.1, sx: 0.44, sy: torso * 0.3, sz: 0.28 }),
+        ...ghostPair(UNIT.bevelBox, { y: legH + torso * 0.74, sx: 0.5, sy: torso * 0.3, sz: 0.3 }),
+        ...ghostPair(UNIT.bevelBox, { x: -0.07, y: legH + torso * 0.24, rz: -0.1, sx: 0.44, sy: torso * 0.3, sz: 0.28 }, 0.1),
+        // Shoulders, one of which has been resolved and one of which hasn't.
+        part(UNIT.bevelBox, b.head, { x: 0.3, y: legH + torso * 0.92, rz: 0.18, sx: 0.26, sy: 0.16, sz: 0.28 }),
+        ...ghostPair(UNIT.bevelBox, { x: -0.3, y: legH + torso * 0.9, rz: -0.2, sx: 0.26, sy: 0.16, sz: 0.28 }, 0.12),
+        // Head, floating clear of a neck that is not being drawn.
+        part(UNIT.bevelBox, b.head, { y: headY, rz: 0.1, sx: 0.34, sy: 0.32, sz: 0.32 }),
+        ...ghostPair(UNIT.bevelBox, { y: headY, rz: 0.1, sx: 0.34, sy: 0.32, sz: 0.32 }, 0.09),
+        emit(B, b.eye, { y: headY + 0.02, z: 0.17, sx: 0.26, sy: 0.06, sz: 0.02 }),
+        emit(B, MAG, { x: -0.06, y: headY - 0.08, z: 0.18, sx: 0.16, sy: 0.03, sz: 0.02, opacity: 0.8 }),
+        // A second, wrong head, a frame behind the first.
+        emit(UNIT.bevelBox, CYN, { x: 0.14, y: headY + 0.06, z: -0.12, rz: -0.2, sx: 0.3, sy: 0.28, sz: 0.28, opacity: 0.25 }),
+        // Scanline bands where the model has failed to resolve at all.
+        ...Array.from({ length: 7 }, (_, i) => shard(
+          ((i * 37) % 7 - 3) * 0.13, legH + torso * (0.14 + i * 0.16), 0.2,
+          0.34 - (i % 3) * 0.08, 0.028, (i % 3 - 1) * 0.12)),
+        ...Array.from({ length: 4 }, (_, i) => shard(
+          ((i * 53) % 5 - 2) * 0.16, headY + 0.1 - i * 0.06, 0.2, 0.26, 0.02, 0)),
+        // Limbs, drifting apart, with the joints simply missing.
+        part(UNIT.bevelBox, b.body, { x: 0.36, y: legH + torso * 0.72, rz: 0.3, sx: 0.12, sy: torso * 0.28, sz: 0.12 }),
+        part(UNIT.bevelBox, b.body, { x: 0.46, y: legH + torso * 0.3, rz: -0.2, sx: 0.11, sy: torso * 0.28, sz: 0.11 }),
+        part(UNIT.bevelBox, b.head, { x: 0.5, y: legH + torso * 0.02, sx: 0.14, sy: 0.14, sz: 0.14 }),
+        ...ghostPair(UNIT.bevelBox, { x: 0.46, y: legH + torso * 0.3, rz: -0.2, sx: 0.11, sy: torso * 0.28, sz: 0.11 }, 0.09),
+        part(UNIT.bevelBox, b.body, { x: -0.38, y: legH + torso * 0.6, rz: -0.4, sx: 0.12, sy: torso * 0.3, sz: 0.12 }),
+        part(UNIT.bevelBox, b.body, { x: -0.5, y: legH + torso * 0.18, rz: -0.15, sx: 0.11, sy: torso * 0.26, sz: 0.11 }),
+        ...ghostPair(UNIT.bevelBox, { x: -0.5, y: legH + torso * 0.18, rz: -0.15, sx: 0.11, sy: torso * 0.26, sz: 0.11 }, 0.11),
+        // Loose fragments orbiting where the silhouette ought to be.
+        ...Array.from({ length: 5 }, (_, i) => emit(UNIT.bevelBox, i % 2 ? CYN : MAG, {
+          x: Math.cos(i * 1.7) * 0.6, y: legH + torso * (0.3 + i * 0.2), z: Math.sin(i * 1.7) * 0.3,
+          rz: i * 0.5, sx: 0.09, sy: 0.09, sz: 0.09, opacity: 0.5,
         })),
       ],
-      legL: [part(B, b.body, { x: 0.14, y: -legH * 0.55, sx: 0.14, sy: legH * 0.8, sz: 0.14 })],
-      legR: [part(B, b.body, { x: -0.14, y: -legH * 0.42, sx: 0.14, sy: legH * 0.7, sz: 0.14 })],
+      legL: [
+        part(UNIT.bevelBox, b.body, { x: 0.14, y: -legH * 0.34, sx: 0.14, sy: legH * 0.42, sz: 0.14 }),
+        part(UNIT.bevelBox, b.body, { x: 0.18, y: -legH * 0.78, rz: 0.1, sx: 0.13, sy: legH * 0.36, sz: 0.13 }),
+        ...ghostPair(UNIT.bevelBox, { x: 0.18, y: -legH * 0.78, rz: 0.1, sx: 0.13, sy: legH * 0.36, sz: 0.13 }, 0.09),
+        part(UNIT.bevelBox, b.head, { x: 0.18, y: -legH + 0.05, z: 0.06, sx: 0.16, sy: 0.1, sz: 0.26 }),
+      ],
+      legR: [
+        part(UNIT.bevelBox, b.body, { x: -0.14, y: -legH * 0.3, sx: 0.14, sy: legH * 0.38, sz: 0.14 }),
+        part(UNIT.bevelBox, b.body, { x: -0.1, y: -legH * 0.72, rz: -0.12, sx: 0.13, sy: legH * 0.34, sz: 0.13 }),
+        ...ghostPair(UNIT.bevelBox, { x: -0.1, y: -legH * 0.72, rz: -0.12, sx: 0.13, sy: legH * 0.34, sz: 0.13 }, 0.1),
+        part(UNIT.bevelBox, b.head, { x: -0.1, y: -legH + 0.05, z: 0.06, sx: 0.16, sy: 0.1, sz: 0.26 }),
+      ],
     };
   },
+
 };
 
 const _shadeTmp = new THREE.Color();
