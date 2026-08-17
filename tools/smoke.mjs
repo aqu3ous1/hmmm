@@ -383,7 +383,116 @@ try {
     lastDealt = s.dealt;
     if (SHOTS) await page.screenshot({ path: `tools/shots/f${String(f).padStart(2, '0')}-combat.png` });
 
-    // Force-complete the objective, then walk into the boss room.
+    // Play the objective through the real interaction path first.
+    //
+    // Force-completing it means the objective code is never actually exercised
+    // — which is exactly how a bug where the Aquatics "set the core down"
+    // option always out-prioritised every socket, making the floor
+    // uncompletable, survived a passing test suite. This walks the player to
+    // each target and presses E through _updateInteraction, so the distance
+    // picker, the prompts and the completion path are all under test.
+    const objResult = await page.evaluate(() => {
+      const g = window.game;
+      const kind = g.objective.type;
+      // Kinds driven by killing marked elites can't be walked to; they are
+      // covered by the combat pass above.
+      if (kind === 'keycards') return { kind, played: false, reason: 'elite-carried' };
+
+      const start = g.objective.done;
+      // A single press completes a hold, which also exercises the
+      // accessibility path rather than leaving it unrun.
+      const prevTap = g.opts.tapHold;
+      g.opts.tapHold = true;
+
+      const pressAt = (pos) => {
+        g.player.pos.set(pos.x, 0, pos.z);
+        g.input.pressedThisFrame.add('KeyE');
+        g._updateInteraction(1 / 60);
+        g.input.pressedThisFrame.delete('KeyE');
+      };
+
+      let guard = 0;
+      while (g.objective.done < g.objective.total && guard++ < 300) {
+        const before = g.objective.done;
+        if (kind === 'sequence') {
+          if (!g.seqKnown) { pressAt(g.seqManifest.pos); continue; }
+          // The arms are interlocked into an order; pressing them in list
+          // order resets the puzzle forever. Read the order the manifest gave.
+          const want = g.stations.find((o) => o.symbol === g.seqOrder[g.seqAt]);
+          if (want) { pressAt(want.pos); continue; }
+        }
+        if (kind === 'carry') {
+          const core = g.carryCores.find((c) => !c.taken);
+          if (!g.carrying && core) { pressAt(core.group.position); continue; }
+          const sock = g.stations.find((st) => st.state !== 'done');
+          if (g.carrying && sock) { pressAt(sock.pos); continue; }
+        }
+        if (kind === 'pattern') {
+          if (!g.patStarted) { pressAt(g.stations[0].pos); continue; }
+          g.patPlaying = 0;                       // skip the demonstration
+          const want = g.stations[g.patSeq[g.patAt]];
+          if (want) { pressAt(want.pos); continue; }
+        }
+        if (kind === 'marks') { pressAt(g.stations[g.markAt].pos); continue; }
+        if (kind === 'circuit') {
+          // Lights-out is not greedily solvable — a greedy pass gets stuck one
+          // short. Toggles are self-inverse and commute, so the answer is a
+          // subset of stations; with at most eight of them, enumerate.
+          if (!g._solve) {
+            const n = g.stations.length;
+            const idx = new Map(g.stations.map((o, i) => [o, i]));
+            let found = null;
+            for (let mask = 0; mask < (1 << n) && !found; mask++) {
+              const state = g.stations.map((o) => o.on);
+              for (let i = 0; i < n; i++) {
+                if (!(mask & (1 << i))) continue;
+                state[i] = !state[i];
+                for (const l of g.stations[i].links) {
+                  const j = idx.get(l);
+                  state[j] = !state[j];
+                }
+              }
+              if (state.every(Boolean)) found = mask;
+            }
+            g._solve = [];
+            if (found !== null) {
+              for (let i = 0; i < n; i++) if (found & (1 << i)) g._solve.push(g.stations[i]);
+            }
+          }
+          const nextSt = g._solve.shift();
+          if (!nextSt) break;
+          pressAt(nextSt.pos);
+          g.kind.update(g, 1 / 60);                // circuit scores in update()
+          continue;
+        }
+        // nodes / hunt / timed: walk to the next unfinished station.
+        const st = g.stations.find((o) => o.state !== 'done' && o.state !== 'open');
+        if (!st) break;
+        pressAt(st.pos);
+        g.kind.update(g, 1 / 60);
+        if (g.objective.done === before && kind === 'nodes') break;  // needs waves
+      }
+
+      g.opts.tapHold = prevTap;
+      return {
+        kind, played: true, start,
+        done: g.objective.done, total: g.objective.total,
+        guard,
+      };
+    });
+    if (objResult.played) {
+      const ok = objResult.done >= objResult.total;
+      // `nodes` legitimately needs wave defence, which the combat pass drives.
+      const waveDriven = objResult.kind === 'nodes';
+      console.log(`   objective ${objResult.kind}: ${objResult.done}/${objResult.total}`
+        + `${ok ? '' : waveDriven ? ' (wave-driven, force-completing)' : ' — NOT COMPLETABLE'}`);
+      if (!ok && !waveDriven) {
+        errors.push(`floor ${f} objective "${objResult.kind}" could not be completed `
+          + `through the real interaction path (${objResult.done}/${objResult.total})`);
+      }
+    }
+
+    // Whatever is left, force, then walk into the boss room.
     await page.evaluate(() => {
       const g = window.game;
       g.forceObjective();

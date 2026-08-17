@@ -291,6 +291,10 @@ export class AudioEngine {
   setMusicIntensity(v) { if (this._music) this._music.intensity = v; }
 
   stopMusic(fade = 1.2) {
+    // A crossfade scheduled a moment ago would otherwise restart the score
+    // half a second after it was told to stop.
+    clearTimeout(this._xfTimer);
+    this._xfTimer = null;
     if (!this.ready) return;
     this.musicGain.gain.setTargetAtTime(0.0001, this.now, fade / 3);
     setTimeout(() => {

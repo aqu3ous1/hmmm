@@ -3,7 +3,7 @@
 // the animation code has something to swing.
 
 import * as THREE from '../../vendor/three.module.js';
-import { UNIT, assemble } from '../world/geometry.js';
+import { UNIT, assemble, unshareMaterials } from '../world/geometry.js';
 import { buildWeapon } from './weaponModels.js';
 
 const B = UNIT.box, S = UNIT.lowSphere, C = UNIT.lowCyl, IC = UNIT.icosa, OC = UNIT.octa, CN = UNIT.cone;
@@ -1343,11 +1343,13 @@ export function buildEnemyMesh(type) {
   // If the split found nothing (or swallowed the whole model), don't use it.
   const useHead = headParts.length > 0 && bodyParts.length > 0;
 
-  const upper = assemble(surfaced(useHead ? bodyParts : spec.upper, fam, b.chrome));
-  const head = useHead ? assemble(surfaced(headParts, fam, b.chrome)) : null;
+  // Enemies write to their own materials (damage flash, ghosting), so they
+  // must not share them with the rest of the floor.
+  const upper = unshareMaterials(assemble(surfaced(useHead ? bodyParts : spec.upper, fam, b.chrome)));
+  const head = useHead ? unshareMaterials(assemble(surfaced(headParts, fam, b.chrome))) : null;
   if (head) { head.position.y = hY; upper.add(head); }
-  const legL = assemble(surfaced(spec.legL || [], fam, b.chrome));
-  const legR = assemble(surfaced(spec.legR || [], fam, b.chrome));
+  const legL = unshareMaterials(assemble(surfaced(spec.legL || [], fam, b.chrome)));
+  const legR = unshareMaterials(assemble(surfaced(spec.legR || [], fam, b.chrome)));
   legL.position.y = spec.pivot;
   legR.position.y = spec.pivot;
 
@@ -2061,7 +2063,8 @@ export function buildBossMesh(def, alt = false) {
   const g = new THREE.Group();
   const builder = BOSS_BUILDERS[def.id] || BOSS_BUILDERS.crookking;
   const parts = builder(b, def.height, alt);
-  const mesh = assemble(parts);
+  // Bosses flash on hit too, so they get their own materials.
+  const mesh = unshareMaterials(assemble(parts));
   g.add(mesh);
 
   // Bosses cast a contact shadow too — it sells their weight.

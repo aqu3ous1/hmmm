@@ -483,6 +483,17 @@ export const OBJECTIVE_KINDS = {
           });
         }
       } else {
+        // The interaction picker keeps the *closest* offer, so the
+        // "set it down" option below has to be offered at a worse distance
+        // than any socket — at a fixed 0.1 it always won, and seating a core
+        // was literally impossible. The smoke test force-completes objectives,
+        // so it never caught this; a player would have hit it in the first
+        // minute of floor three.
+        let nearestSocket = Infinity;
+        for (const s of g.stations) {
+          if (s.state === 'done') continue;
+          nearestSocket = Math.min(nearestSocket, near(g, s.pos));
+        }
         for (const s of g.stations) {
           if (s.state === 'done') continue;
           add(near(g, s.pos), 'Seat the pump core', () => {
@@ -496,7 +507,8 @@ export const OBJECTIVE_KINDS = {
             tick(g, g.objective.label);
           });
         }
-        add(0.1, 'Set the core down', () => {
+        // Only when there is no socket in reach.
+        if (nearestSocket > 3.4) add(3.3, 'Set the core down', () => {
           const c = g.carrying;
           g.carrying = null;
           g.player.carryPenalty = 1;

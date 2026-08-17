@@ -96,6 +96,28 @@ export function quad(a, b, c, d, colors, uvScale = 1) {
   return g;
 }
 
+/**
+ * Bake an RGB colour into a geometry's vertex colours.
+ *
+ * This is what lets a whole enemy collapse into three or four draw calls: if
+ * colour lives in the vertices, `assemble()` only has to batch by *material
+ * class* — how shiny and how rough — instead of by every distinct hex in the
+ * model. A detailed model uses twenty colours and about four surfaces.
+ */
+const _paintCol = new THREE.Color();
+export function paintRGB(geo, hex) {
+  const n = geo.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  _paintCol.setHex(hex);
+  for (let i = 0; i < n; i++) {
+    arr[i * 3] = _paintCol.r;
+    arr[i * 3 + 1] = _paintCol.g;
+    arr[i * 3 + 2] = _paintCol.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+
 /** Uniform vertex colour on an existing geometry, for merging alongside quads. */
 export function paint(geo, shade) {
   const n = geo.attributes.position.count;
@@ -199,42 +221,98 @@ function wedgeGeometry() {
  *   metal 0..1   rough 0..1   emissive hex   glow (emissive intensity)
  *   opacity 0..1 basic (unlit) smooth (per-vertex normals instead of flat)
  */
+/**
+ * Material cache. Two parts that ask for the same surface get the same
+ * material object, which lets three.js skip a program and uniform switch
+ * between them and keeps the total material count bounded no matter how many
+ * models are built over a run.
+ */
+const _matCache = new Map();
+
+/** Round to a step, so "0.55 rough" and "0.58 rough" are the same material. */
+const q = (v, step) => Math.round(v / step) * step;
+
 export function assemble(parts, { flatShading = true } = {}) {
   const group = new THREE.Group();
   const batches = new Map();
   for (const p of parts) {
+    // Quantise the PBR parameters before keying.
+    //
+    // Keying on exact floats meant every hand-tuned `rough: 0.58` became its
+    // own draw call, and the detailed models push twenty to thirty distinct
+    // triples each — a single Ashwalker was costing thirty draws. Nobody can
+    // see the difference between 0.55 and 0.58 roughness; everybody can see a
+    // frame rate. Colour is still exact, because colour is what reads.
+    // Colour is deliberately NOT in the key — it goes into the vertices below.
+    // Keying on it meant a twenty-colour model cost twenty draw calls, and a
+    // single Ashwalker was thirty. Emissive stays in the key because it is a
+    // material property with no per-vertex equivalent.
     const key = [
-      p.color, p.emissive || 0, p.glow ?? 1, p.opacity ?? 1,
-      p.basic ? 1 : 0, p.metal ?? 0, p.rough ?? 0.8, p.smooth ? 1 : 0,
+      p.emissive || 0, q(p.glow ?? 1, 0.25), q(p.opacity ?? 1, 0.2),
+      p.basic ? 1 : 0, q(p.metal ?? 0, 0.25), q(p.rough ?? 0.8, 0.2),
+      p.smooth ? 1 : 0, q(p.envIntensity ?? 1, 0.5),
     ].join('|');
-    if (!batches.has(key)) batches.set(key, { parts: [], spec: p });
+    if (!batches.has(key)) batches.set(key, { parts: [], spec: p, key });
     batches.get(key).parts.push(p);
   }
-  for (const { parts: ps, spec } of batches.values()) {
-    const merged = mergeGeometries(ps.map((p) => xform(p.geo || UNIT.box, p)));
+  for (const { parts: ps, spec, key } of batches.values()) {
+    const merged = mergeGeometries(ps.map((p) => paintRGB(xform(p.geo || UNIT.box, p), p.color)));
     if (spec.smooth) merged.computeVertexNormals();
     const transparent = (spec.opacity ?? 1) < 1;
-    let mat;
-    if (spec.basic) {
-      mat = new THREE.MeshBasicMaterial({
-        color: spec.color, transparent, opacity: spec.opacity ?? 1,
-        toneMapped: spec.toneMapped !== false,
-      });
-    } else {
-      mat = new THREE.MeshStandardMaterial({
-        color: spec.color,
-        emissive: spec.emissive || 0x000000,
-        emissiveIntensity: spec.glow ?? 1,
-        metalness: spec.metal ?? 0,
-        roughness: spec.rough ?? 0.8,
-        flatShading: spec.smooth ? false : flatShading,
-        transparent, opacity: spec.opacity ?? 1,
-        envMapIntensity: spec.envIntensity ?? 1,
-      });
+    const cacheKey = `${key}|${flatShading ? 1 : 0}`;
+    let mat = _matCache.get(cacheKey);
+    if (!mat) {
+      if (spec.basic) {
+        mat = new THREE.MeshBasicMaterial({
+          color: 0xffffff, vertexColors: true,
+          transparent, opacity: spec.opacity ?? 1,
+          toneMapped: spec.toneMapped !== false,
+        });
+      } else {
+        mat = new THREE.MeshStandardMaterial({
+          color: 0xffffff, vertexColors: true,
+          emissive: spec.emissive || 0x000000,
+          emissiveIntensity: q(spec.glow ?? 1, 0.25),
+          metalness: q(spec.metal ?? 0, 0.25),
+          roughness: q(spec.rough ?? 0.8, 0.2),
+          flatShading: spec.smooth ? false : flatShading,
+          transparent, opacity: spec.opacity ?? 1,
+          envMapIntensity: q(spec.envIntensity ?? 1, 0.5),
+        });
+      }
+      // Shared: disposeTree must not free these, hence the flag it checks.
+      mat.userData.shared = true;
+      _matCache.set(cacheKey, mat);
     }
     group.add(new THREE.Mesh(merged, mat));
   }
   return group;
+}
+
+/**
+ * Give a subtree its own copies of every material.
+ *
+ * The cache above hands the same material object to everything that asks for
+ * the same surface, which is exactly right for static geometry — and exactly
+ * wrong for anything that *writes* to its material at runtime. The enemy
+ * damage flash pushes emissive to white, and ghosts drop their opacity; with
+ * shared materials, flashing one Shambler flashes every Shambler on the floor.
+ * Anything that mutates its own look calls this once at build time.
+ */
+export function unshareMaterials(root) {
+  const seen = new Map();
+  root.traverse((o) => {
+    if (!o.material || Array.isArray(o.material)) return;
+    if (!o.material.userData?.shared) return;
+    let copy = seen.get(o.material);
+    if (!copy) {
+      copy = o.material.clone();
+      copy.userData = { ...o.material.userData, shared: false };
+      seen.set(o.material, copy);
+    }
+    o.material = copy;
+  });
+  return root;
 }
 
 /** Dispose everything under a node so floor transitions don't leak GPU memory. */
@@ -244,6 +322,9 @@ export function disposeTree(root) {
     if (o.material) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) {
+        // Cached materials are shared by every model built this session;
+        // disposing one here would blank every other mesh using it.
+        if (m.userData?.shared) continue;
         for (const k of ['map', 'lightMap', 'aoMap', 'emissiveMap', 'normalMap', 'alphaMap']) {
           if (m[k]) m[k].dispose();
         }

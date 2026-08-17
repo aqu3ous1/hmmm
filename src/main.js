@@ -73,6 +73,7 @@ class Game {
     this.corpses = [];
     this.contract = null;
     this.contractsDone = 0;
+    this.floorToken = 0;
     this.foundLore = new Set();
     this.foundEggs = new Set();
     this.cacheKeys = 0;
@@ -402,6 +403,8 @@ class Game {
   _buildFloor(index, cfg) {
     this._disposeTitleScene();
     this._clearFloor();
+    // Anything deferred by a timer on the previous floor is now stale.
+    this.floorToken++;
     this.floorIndex = index;
     this.prologueActive = false;
     this._lightRamp = null;
@@ -684,7 +687,10 @@ class Game {
    */
   _makeCorpse(enemy) {
     const mesh = enemy.mesh;
-    if (!mesh || this.corpses.length > 14) { enemy.dispose(); return; }
+    // Each corpse is a full rig, so it costs what a live enemy costs to draw.
+    // Eight is enough that a good burst leaves a pile and few enough that it
+    // cannot double the frame's draw calls during the heaviest wave.
+    if (!mesh || this.corpses.length >= 8) { enemy.dispose(); return; }
     // Hand the mesh over before dispose() can take it.
     enemy.mesh = null;
     enemy.dispose();
@@ -2087,13 +2093,22 @@ class Game {
     this._queue(lines, true);
     this._queue(STORY.bossDown[this.floorIndex] || []);
 
+    // Both of these fire seconds later, by which time the player may have
+    // ridden the lift or quit to the title. Without the token check, the drop
+    // lands on a level that no longer exists and the dispose runs against a
+    // boss belonging to the next floor.
+    const token = this.floorToken;
     setTimeout(() => {
+      if (token !== this.floorToken) return;
       if (this.boss) { this.boss.dispose(); this.boss = null; }
     }, 2200);
 
     if (def.dropWeapon) {
       const p = this.boss.pos.clone();
-      setTimeout(() => this._dropWeaponPickup(def.dropWeapon, p), 1800);
+      setTimeout(() => {
+        if (token !== this.floorToken || !this.level) return;
+        this._dropWeaponPickup(def.dropWeapon, p);
+      }, 1800);
     }
 
     this._unsealBossRoom();
