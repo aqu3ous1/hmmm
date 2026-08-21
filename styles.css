@@ -397,9 +397,16 @@ html, body {
 
 /* ------------------------------------------------------------ Screens */
 
+/* `safe center` rather than `center`.
+   A centred flex column with overflow-y:auto centres the *overflow* too, which
+   pushes the first children out through the top edge where no scrollbar can
+   reach them. With three settings sections added to the pause menu, that was
+   the heading and the volume sliders becoming unreachable on a laptop screen.
+   `safe` falls back to flex-start the moment the content stops fitting. */
 .screen {
   position: absolute; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; justify-content: safe center;
   gap: 22px; padding: 44px;
   background: radial-gradient(ellipse 90% 70% at 50% 45%,
     rgba(16, 24, 34, .96), rgba(2, 3, 6, .99) 78%);
@@ -881,6 +888,15 @@ ul.rules b { color: var(--ink); font-weight: 400; }
 
 .accessHead { margin-top: 6px; }
 .sliders.access { max-width: 520px; }
+/* On anything wider than a phone the settings run two abreast, so the pause
+   menu is a panel rather than a scroll. */
+@media (min-width: 900px) {
+  .sliders.access {
+    max-width: 860px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; align-items: start;
+  }
+  .sliders.access label.select, .sliders.access label.check { grid-column: span 1; }
+}
 .sliders.access label.check {
   display: flex; align-items: flex-start; gap: 12px; cursor: pointer;
 }

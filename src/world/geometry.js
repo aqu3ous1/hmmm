@@ -16,16 +16,23 @@ export function mergeGeometries(geoms) {
   let vertexCount = 0;
   let indexCount = 0;
   let anyColor = false;
+  // Colour is three floats, or four when anything being merged carries a
+  // vertex alpha. The widest input wins for the whole output and the narrow
+  // ones are padded opaque, because a single buffer cannot be both.
+  let colorSize = 3;
   for (const g of kept) {
     vertexCount += g.attributes.position.count;
     indexCount += g.index ? g.index.count : g.attributes.position.count;
-    if (g.attributes.color) anyColor = true;
+    if (g.attributes.color) {
+      anyColor = true;
+      colorSize = Math.max(colorSize, g.attributes.color.itemSize);
+    }
   }
 
   const position = new Float32Array(vertexCount * 3);
   const normal = new Float32Array(vertexCount * 3);
   const uv = new Float32Array(vertexCount * 2);
-  const color = anyColor ? new Float32Array(vertexCount * 3).fill(1) : null;
+  const color = anyColor ? new Float32Array(vertexCount * colorSize).fill(1) : null;
   const index = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
 
   let vo = 0, io = 0;
@@ -37,7 +44,19 @@ export function mergeGeometries(geoms) {
     position.set(p.array.subarray(0, p.count * 3), vo * 3);
     if (n) normal.set(n.array.subarray(0, n.count * 3), vo * 3);
     if (u) uv.set(u.array.subarray(0, u.count * 2), vo * 2);
-    if (color && c) color.set(c.array.subarray(0, c.count * 3), vo * 3);
+    if (color && c) {
+      if (c.itemSize === colorSize) {
+        color.set(c.array.subarray(0, c.count * colorSize), vo * colorSize);
+      } else {
+        // Narrower input into a wider buffer: copy the channels it has and
+        // leave the rest at the fill value, which is 1 — opaque.
+        for (let i = 0; i < c.count; i++) {
+          for (let k = 0; k < c.itemSize; k++) {
+            color[(vo + i) * colorSize + k] = c.array[i * c.itemSize + k];
+          }
+        }
+      }
+    }
     if (g.index) {
       const gi = g.index.array;
       for (let i = 0; i < gi.length; i++) index[io + i] = gi[i] + vo;
@@ -53,7 +72,7 @@ export function mergeGeometries(geoms) {
   out.setAttribute('position', new THREE.BufferAttribute(position, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  if (color) out.setAttribute('color', new THREE.BufferAttribute(color, 3));
+  if (color) out.setAttribute('color', new THREE.BufferAttribute(color, colorSize));
   out.setIndex(new THREE.BufferAttribute(index, 1));
   out.computeBoundingSphere();
   return out;
@@ -105,16 +124,28 @@ export function quad(a, b, c, d, colors, uvScale = 1) {
  * model. A detailed model uses twenty colours and about four surfaces.
  */
 const _paintCol = new THREE.Color();
-export function paintRGB(geo, hex) {
+export function paintRGB(geo, hex, alpha) {
+  // Alpha rides along in the vertices too, when asked for.
+  //
+  // Opacity used to be part of the material key, so a Glitchling — whose whole
+  // identity is chromatic ghosts at half a dozen different alphas — paid a
+  // separate draw call for each one, four of them for sixteen triangles apiece.
+  // three.js reads a four-component colour attribute as vec4 and multiplies
+  // diffuse alpha by it, which is exactly the same trick that took colour out
+  // of the key. Only batches that actually contain a translucent part pay the
+  // extra float, so nothing opaque gets wider vertices for nothing.
+  const withAlpha = alpha !== undefined;
+  const size = withAlpha ? 4 : 3;
   const n = geo.attributes.position.count;
-  const arr = new Float32Array(n * 3);
+  const arr = new Float32Array(n * size);
   _paintCol.setHex(hex);
   for (let i = 0; i < n; i++) {
-    arr[i * 3] = _paintCol.r;
-    arr[i * 3 + 1] = _paintCol.g;
-    arr[i * 3 + 2] = _paintCol.b;
+    arr[i * size] = _paintCol.r;
+    arr[i * size + 1] = _paintCol.g;
+    arr[i * size + 2] = _paintCol.b;
+    if (withAlpha) arr[i * size + 3] = alpha;
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, size));
   return geo;
 }
 
@@ -305,8 +336,13 @@ export function assemble(parts, { flatShading = true } = {}) {
     // Keying on it meant a twenty-colour model cost twenty draw calls, and a
     // single Ashwalker was thirty. Emissive stays in the key because it is a
     // material property with no per-vertex equivalent.
+    // Opacity is in the key only as a yes/no. Its *value* rides in the vertex
+    // alpha, so six ghosts at six different alphas are one draw call instead
+    // of six. The binary stays because it decides which render pass the batch
+    // belongs to, and merging opaque geometry into the transparent pass is a
+    // sorting bug rather than a saving.
     const key = [
-      p.emissive || 0, q(p.glow ?? 1, 0.25), q(p.opacity ?? 1, 0.2),
+      p.emissive || 0, q(p.glow ?? 1, 0.25), (p.opacity ?? 1) < 1 ? 1 : 0,
       p.basic ? 1 : 0, q(p.metal ?? 0, 0.25), q(p.rough ?? 0.8, 0.2),
       p.smooth ? 1 : 0, q(p.envIntensity ?? 1, 0.5),
     ].join('|');
@@ -320,16 +356,24 @@ export function assemble(parts, { flatShading = true } = {}) {
   foldTinyBatches(batches);
 
   for (const { parts: ps, spec, key } of batches.values()) {
-    const merged = mergeGeometries(ps.map((p) => paintRGB(xform(p.geo || UNIT.box, p), p.color)));
-    if (spec.smooth) merged.computeVertexNormals();
     const transparent = (spec.opacity ?? 1) < 1;
+    const merged = mergeGeometries(ps.map((p) => paintRGB(
+      xform(p.geo || UNIT.box, p), p.color,
+      // Only a translucent batch carries alpha, and then every part in it does
+      // — a mixed-width colour buffer is not a thing.
+      transparent ? (p.opacity ?? 1) : undefined,
+    )));
+    if (spec.smooth) merged.computeVertexNormals();
     const cacheKey = `${key}|${flatShading ? 1 : 0}`;
     let mat = _matCache.get(cacheKey);
     if (!mat) {
       if (spec.basic) {
         mat = new THREE.MeshBasicMaterial({
+          // opacity stays 1: the per-vertex alpha carries the value, and the
+          // material multiplies on top of it — which is what lets the corpse
+          // fade and the ghost dim still work by writing this one number.
           color: 0xffffff, vertexColors: true,
-          transparent, opacity: spec.opacity ?? 1,
+          transparent, opacity: 1,
           toneMapped: spec.toneMapped !== false,
         });
       } else {
@@ -340,7 +384,7 @@ export function assemble(parts, { flatShading = true } = {}) {
           metalness: q(spec.metal ?? 0, 0.25),
           roughness: q(spec.rough ?? 0.8, 0.2),
           flatShading: spec.smooth ? false : flatShading,
-          transparent, opacity: spec.opacity ?? 1,
+          transparent, opacity: 1,
           envMapIntensity: q(spec.envIntensity ?? 1, 0.5),
         });
       }

@@ -297,6 +297,7 @@ export class HUD {
   hideIntercom() { this.el.intercom.classList.add('hidden'); }
 
   hitMarker(crit, head) {
+    if (this.hitMarkers === false) return;
     this.el.hitmarker.classList.add('on');
     this.el.hitmarker.classList.toggle('crit', !!crit && !head);
     this.el.hitmarker.classList.toggle('head', !!head);

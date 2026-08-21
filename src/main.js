@@ -44,11 +44,81 @@ import { WeaponRuntime } from './combat/weaponRuntime.js';
 import { Chest, WeaponIconCache } from './props/chest.js';
 import { buildNode, buildLift, buildPickup, buildWeaponModel } from './render/models.js';
 import { buildHands, holdFor, KIT_HAND_SCALE } from './render/hands.js';
+import { buildPlayerModel, posePlayerModel } from './render/playerModel.js';
 
 // Where the firing hand sits in the viewmodel holder, for every weapon. Fixed,
 // because hands that move around between weapons is what a floating prop looks
 // like even once you have modelled the hands.
 const HAND_REST = { y: -0.02, z: -0.10 };
+
+/**
+ * Run a line of Kimvatch's past Legal.
+ *
+ * The joke only works if it stays *his* line underneath — a random corporate
+ * generator would just be noise. So this is a substitution list of the exact
+ * words he keeps saying, replaced with what a compliance officer would have
+ * let him say instead. He is still telling you the same thing; it now sounds
+ * like it came out of a settlement.
+ */
+const COMPLIANCE = [
+  [/\bkill(ed|ing|s)?\b/gi, 'decommission$1'],
+  [/\bdie\b/gi, 'conclude participation'],
+  [/\bdead\b/gi, 'non-continuing'],
+  [/\bdeath\b/gi, 'adverse outcome'],
+  [/\bblood\b/gi, 'fluid'],
+  [/\bpain\b/gi, 'discomfort'],
+  [/\bhurt(s)?\b/gi, 'produce discomfort'],
+  [/\btrapped\b/gi, 'retained on site'],
+  [/\bescape\b/gi, 'egress'],
+  [/\bmistake\b/gi, 'learning'],
+  [/\bsorry\b/gi, 'regretful, without admission of liability,'],
+  [/\bwrong\b/gi, 'non-optimal'],
+  [/\bexperiment(s)?\b/gi, 'evaluation$1'],
+  [/\bpatient\b/gi, 'participant'],
+  [/\bmonster(s)?\b/gi, 'unscheduled asset$1'],
+  [/\bI lied\b/gi, 'the disclosure was staged'],
+  [/\byou will\b/gi, 'you may, at your discretion,'],
+];
+
+function complianceRewrite(text) {
+  let out = text;
+  for (const [re, to] of COMPLIANCE) out = out.replace(re, to);
+  // Legal likes a footnote and dislikes a promise.
+  return out.replace(/!+/g, '.') + ' [1]';
+}
+
+/**
+ * Captions that have stopped agreeing with the audio.
+ *
+ * Deterministic on the line and the floor, so a given line always corrupts the
+ * same way. Random-per-frame would flicker, and flicker reads as a rendering
+ * fault rather than as a joke — which, given the Glitchling exists, is a real
+ * risk in this game specifically.
+ */
+const CAPTION_LIES = [
+  '[indistinct]', '[he is lying]', '[sound of a door not opening]',
+  '[REDACTED BY POD SYSTEM]', '[laughter, one person]', '[he checks something]',
+  '[the recording skips here]', '[speaker unidentified]',
+];
+
+function unreliableCaption(text, floor) {
+  let h = floor * 2654435761;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+  h = Math.abs(h);
+  const words = text.split(' ');
+  if (words.length < 5) return text;
+  // Swallow a run of words in the middle and caption what was lost.
+  const at = 2 + (h % Math.max(1, words.length - 4));
+  const run = 1 + (h >> 5) % 3;
+  const tag = CAPTION_LIES[(h >> 9) % CAPTION_LIES.length];
+  words.splice(at, run, tag);
+  return words.join(' ');
+}
+
+// Weapons the kit gave a magnified optic. They pull the field of view in twice
+// as far as iron sights, which is the only thing that makes a scope worth the
+// rail space it costs.
+const SCOPED = new Set(['nullptr', 'actuary']);
 
 import { PostFX } from './render/postfx.js';
 import { Director, shot } from './render/director.js';
@@ -78,7 +148,23 @@ class Game {
       tapHold: false,  // complete hold-to-engage on a single press
       skipCine: false, // play story as dialogue, without the camera
       colour: 'none',
+      // --- view ---
+      fov: 78,               // base field of view, before aim and sprint
+      thirdPerson: 'off',    // off | shoulder | far
+      // --- play ---
+      hitMarkers: true,      // a tick on the reticle when a shot lands
+      damageNumbers: true,
+      autoSprint: false,     // move forward at a run without holding shift
+      // --- toys ---
+      bigHead: false,
+      lowGravity: false,
+      gore: 1,               // particle volume on a kill
+      // --- jokes ---
+      compliance: false,     // Kimvatch's lines pass through Legal first
+      subtitlesLie: false,   // ...and the subtitles disagree with him
     };
+    this._tpDist = 0;
+    this.playerBody = null;
     this.input = new Input(this.canvas);
     this.state = 'title';         // title | playing | paused | dead | floorcard | victory
     this.now = 0;
@@ -276,6 +362,43 @@ class Game {
       this.opts.colour = e.target.value;
       this.post.setColourMode(e.target.value);
     };
+
+    // --- view and comfort ---
+    $('optFov').oninput = (e) => { this.opts.fov = Number(e.target.value); };
+    $('optView').onchange = (e) => { this.opts.thirdPerson = e.target.value; };
+    $('optAutoSprint').onchange = (e) => {
+      this.opts.autoSprint = e.target.checked;
+      this.player.autoSprint = e.target.checked;
+    };
+    $('optHitMark').onchange = (e) => {
+      this.opts.hitMarkers = e.target.checked;
+      this.hud.hitMarkers = e.target.checked;
+    };
+    $('optDmgNum').onchange = (e) => {
+      this.opts.damageNumbers = e.target.checked;
+      this.damageNumbers.enabled = e.target.checked;
+    };
+
+    // --- experiments ---
+    $('optGore').oninput = (e) => { this.opts.gore = e.target.value / 100; };
+    $('optLowG').onchange = (e) => {
+      this.opts.lowGravity = e.target.checked;
+      // Lower gravity *and* a softer jump: cutting gravity alone launches the
+      // player into the ceiling, which in a 4.6-metre room is a head injury
+      // rather than a moon walk.
+      this.player.gravity = e.target.checked ? 8.8 : 21;
+      this.player.jumpImpulse = e.target.checked ? 4.9 : 6.2;
+    };
+    $('optBigHead').onchange = (e) => {
+      this.opts.bigHead = e.target.checked;
+      // Applied to everything already on the floor, not only to what spawns
+      // next — a toggle that takes effect in ten minutes is not a toggle.
+      for (const en of this.enemies) this._applyToys(en.mesh);
+      if (this.boss) this._applyToys(this.boss.mesh);
+      if (this.playerBody) this._applyToys(this.playerBody);
+    };
+    $('optCompliance').onchange = (e) => { this.opts.compliance = e.target.checked; };
+    $('optSubs').onchange = (e) => { this.opts.subtitlesLie = e.target.checked; };
 
     this.canvas.addEventListener('click', () => {
       if (this.state === 'playing' && !this.input.locked) this.input.requestLock();
@@ -819,6 +942,21 @@ class Game {
     }
   }
 
+  /**
+   * Apply the joke settings to one rig.
+   *
+   * Called at spawn and again when a toggle flips, because a setting that only
+   * affects things created after you changed it is a setting people report as
+   * broken. Every rig exposes `userData.head`, so this needs no per-model
+   * knowledge — which is exactly why the head was split out in the first place.
+   */
+  _applyToys(rig) {
+    const head = rig?.userData?.head;
+    if (!head) return;
+    const k = this.opts.bigHead ? 2.15 : 1;
+    head.scale.setScalar(k);
+  }
+
   /** Free a corpse's rig. Shared by expiry and by the cap evicting the oldest. */
   _retireCorpse(c) {
     if (!c?.mesh) return;
@@ -1189,6 +1327,7 @@ class Game {
     if (this.enemies.length >= MAX_ENEMIES) return null;
     const cfg = floorConfig(this.floorIndex);
     const e = new Enemy(typeId, pos, 0.85 + cfg.difficulty * 0.55);
+    this._applyToys(e.mesh);
     this.scene.add(e.mesh);
     this.enemies.push(e);
     return e;
@@ -1276,6 +1415,15 @@ class Game {
       return;
     }
     if (input.pressed('Escape')) { this.pause(); return; }
+    if (input.pressed('KeyV')) {
+      const order = ['off', 'shoulder', 'far'];
+      const next = order[(order.indexOf(this.opts.thirdPerson) + 1) % order.length];
+      this.opts.thirdPerson = next;
+      this.hud.toast(next === 'off' ? 'FIRST PERSON'
+        : next === 'shoulder' ? 'THIRD PERSON' : 'THIRD PERSON — WIDE', 'info', 1.2);
+      const sel = $('optView');
+      if (sel) sel.value = next;
+    }
     if (input.pressed('KeyM')) {
       audio.setVolume(audio.volume > 0 ? 0 : 0.7);
       this.hud.toast(audio.volume > 0 ? 'AUDIO ON' : 'AUDIO MUTED', 'info', 1);
@@ -1298,7 +1446,12 @@ class Game {
     if (input.pressed('Digit2')) this._selectSlot(1);
     if (input.pressed('KeyR')) this.runtime.startReload(this._weaponCtx());
     if (input.pressed('KeyF')) this._dropWeapon();
-    if (input.pressed('ControlLeft') || input.pressed('KeyC')) {
+    // Dodge is Ctrl only now. C moved to crouch, which is where every shooter
+    // in thirty years has put it — sharing it with the dodge roll meant the
+    // first thing a player did on pressing C was roll into the room they were
+    // trying to duck behind cover in. Ctrl keeps working, and the controls
+    // screen says so.
+    if (input.pressed('ControlLeft')) {
       if (player.tryDodge(input.moveAxis())) {
         audio.melee(240, 0.22);
         this.particles.burst(player.pos.x, 0.3, player.pos.z, 8, { color: 0xbfd8ff, speed: 4, size: 0.06, life: 0.3 });
@@ -1353,9 +1506,20 @@ class Game {
     // simulates underneath it so the world does not freeze mid-shot.
     if (!(this.cine && this.cine.update(dt, this.camera))) {
       player.applyCamera(this.camera, dt, this.opts.bob, this.opts.shake);
+      this._applyThirdPerson(dt);
     }
+    // Outside the cutscene branch on purpose. The camera belongs to the
+    // director while a scene runs, but the *body* still has to keep walking —
+    // posing it only when the player owns the camera left him frozen
+    // mid-stride in the middle of every boss intro.
+    this._syncPlayerBody(dt);
+    this._applyZoom(dt);
     this._updateViewmodel(dt);
-    this.torch.position.set(this.camera.position.x, this.camera.position.y + 0.2, this.camera.position.z);
+    // The torch rides the player, not the lens. Pinning it to the camera meant
+    // that stepping into third person moved the only readable light source
+    // three metres backwards, and the corridor ahead went dark exactly when
+    // the player asked to see more of it.
+    this.torch.position.set(player.pos.x, player.eyeY() + 0.2, player.pos.z);
 
     // --- hud ---
     this._updateHud(dt);
@@ -1363,23 +1527,208 @@ class Game {
   }
 
   // =======================================================================
+  // Camera modes
+  // =======================================================================
+
+  /**
+   * Field of view, driven by aim and by sprint.
+   *
+   * Zoom is how aiming *feels*; the spread reduction is how it plays. Scoped
+   * weapons — anything the kit gave an optic — pull further in than iron
+   * sights, which is the only thing that makes an optic worth its rail space.
+   */
+  _applyZoom(dt) {
+    const p = this.player;
+    // Which weapons carry glass. `anim` only holds the *moving* parts, so an
+    // optic never appears there — checking it was a silent always-false and
+    // every weapon zoomed the same amount.
+    const scoped = SCOPED.has(p.weapon?.id);
+    const target = this.opts.fov
+      - p.aim * (scoped ? 26 : 13)
+      + (p.sprinting ? 5 : 0);
+    this.camera.fov = damp(this.camera.fov, target, 10, dt);
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Third person: orbit the camera back and to one shoulder.
+   *
+   * The distance is a raycast, not a constant. A fixed boom clips through
+   * every wall in a game made of corridors 2.4 metres wide, and a camera
+   * inside a wall shows the player the inside of the level. So the boom is
+   * shortened to whatever is actually clear, and the eye position is the
+   * fallback when nothing is.
+   */
+  _applyThirdPerson(dt) {
+    const mode = this.opts.thirdPerson;
+    // Over-the-shoulder wants to be close; a three-metre boom is a strategy
+    // camera. Prone pulls in further still, or he is a smudge on the floor.
+    const base = mode === 'off' ? 0 : mode === 'far' ? 4.2 : 2.1;
+    const want = base * (this.player.stance === 'prone' ? 0.72 : 1);
+    this._tpDist = damp(this._tpDist ?? 0, want, 8, dt);
+    if (this._tpDist < 0.05) return;
+
+    const p = this.player;
+    const cam = this.camera;
+    // Pivot at the head, offset to the shoulder so the body does not sit in
+    // the middle of the crosshair.
+    // Shoulder offset, collision-checked in its own right.
+    //
+    // Enough of one that the character clears the reticle — at 0.42 he stood
+    // directly under the crosshair, which is the one thing an over-the-shoulder
+    // camera exists to avoid. But the corridors here are 2.4 metres wide, so an
+    // un-checked offset walks the lens straight into the wall the player is
+    // hugging and fills the screen with the inside of the level. The boom's
+    // backward raycast does not catch this, because it starts from the pivot
+    // that is already inside the wall.
+    const wantSide = mode === 'far' ? 0 : 0.82;
+    const r = p.right(this._tmpB);
+    let side = wantSide;
+    if (wantSide > 0) {
+      const lat = this.level?.raycast(cam.position.x, cam.position.z, r.x, r.z, wantSide + 0.3);
+      if (lat && lat.hit) side = Math.max(0, lat.dist - 0.3);
+    }
+    const px = cam.position.x + r.x * side;
+    const py = cam.position.y + 0.12;
+    const pz = cam.position.z + r.z * side;
+
+    const f = p.forward(this._tmpA);
+    const hit = this.level?.raycast(px, pz, -f.x, -f.z, this._tpDist + 0.4);
+    const clear = hit && hit.hit ? hit.dist : Infinity;
+    const dist = Math.max(0, Math.min(this._tpDist, clear - 0.35));
+
+    cam.position.set(px - f.x * dist, py - f.y * dist, pz - f.z * dist);
+    // Never let the boom put the lens through the floor or the ceiling.
+    cam.position.y = clamp(cam.position.y, 0.35, WALL_H - 0.35);
+  }
+
+  /**
+   * Keep the visible body in step with the player, and hide it when the
+   * camera is inside it.
+   */
+  _syncPlayerBody(dt) {
+    const show = this.opts.thirdPerson !== 'off'
+      && (this.state === 'playing' || this.state === 'paused');
+    if (show && !this.playerBody) {
+      this.playerBody = buildPlayerModel();
+      this.scene.add(this.playerBody);
+    }
+    if (!this.playerBody) return;
+    // A body drawn in first person is a pair of shoulders in front of the lens.
+    this.playerBody.visible = show && (this._tpDist ?? 0) > 0.4;
+    if (!this.playerBody.visible) return;
+
+    const p = this.player;
+    this.playerBody.rotation.y = p.yaw + Math.PI;
+    // Pose first, position second: posePlayerModel writes rig.position.y —
+    // going prone lifts the root so the chest rests on the floor rather than
+    // through it — so anything set before the call gets overwritten.
+    posePlayerModel(this.playerBody, {
+      stance: p.stance,
+      t: p.gait,
+      speed: Math.hypot(p.vel.x, p.vel.z),
+      pitch: p.pitch,
+      aim: Math.max(p.aim, this.input.mouse.left ? 0.85 : 0),
+      airborne: !p.onGround,
+      hurt: clamp((2 - p.lastDamageTime) * 0.5, 0, 1),
+    });
+    this.playerBody.position.x = p.pos.x;
+    this.playerBody.position.z = p.pos.z;
+    this.playerBody.position.y += p.pos.y;
+    this._syncBodyWeapon();
+  }
+
+  /**
+   * Put the weapon in the body's right hand.
+   *
+   * Parented to the arm rather than to the rig, so it swings with the arm and
+   * comes up when he shoulders it. A third-person character walking around
+   * with empty fists while bullets come out of nowhere is worse than not
+   * having a body at all.
+   */
+  _syncBodyWeapon() {
+    const rig = this.playerBody;
+    const w = this.player.weapon;
+    const id = w?.id || null;
+    if (rig.userData.heldId === id) return;
+    if (rig.userData.held) {
+      disposeTree(rig.userData.held);
+      rig.userData.held.parent?.remove(rig.userData.held);
+    }
+    rig.userData.held = null;
+    rig.userData.heldId = id;
+    if (!id) return;
+
+    const model = buildWeaponModel(id, w);
+    // Normalise to a hand-sized object. These models are authored at roughly
+    // twice life size for the viewmodel, and a Behemoth held at authored scale
+    // is longer than the man carrying it.
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(this._tmpA);
+    const k = 0.62 / Math.max(0.15, Math.max(size.x, size.y) * 1.6 + size.z * 0.28);
+    model.scale.setScalar(k);
+    // Grip to the fist, muzzle down the arm's forward.
+    const hold = holdFor(id, w.kind);
+    const grip = hold.grip || [0, 0];
+    model.position.set(-grip[0] * k, -0.47, -grip[1] * k + 0.06);
+    model.rotation.set(Math.PI / 2, 0, 0);
+    rig.userData.armR.add(model);
+    rig.userData.held = model;
+  }
+
+  // =======================================================================
   // Weapon context + helpers
   // =======================================================================
+
+  /**
+   * Where a shot should actually go.
+   *
+   * In first person this is just the player's facing, because the eye and the
+   * lens are the same point. In third person they are not: the camera sits
+   * back and off one shoulder, so a shot fired along the player's facing lands
+   * a shoulder's width to the side of the crosshair — at *every* range, since
+   * the two rays are parallel and never converge. Every third-person shooter
+   * solves this the same way, and so does this one: find what the centre of
+   * the screen is pointing at, then aim the muzzle at that instead.
+   */
+  _aimDir(out) {
+    const p = this.player;
+    if (!this._tpDist || this._tpDist < 0.4) return p.forward(out);
+
+    const cam = this.camera;
+    const f = p.forward(this._tmpB);
+    // How far down the centre ray the wall is. Beyond that the target point is
+    // effectively at infinity and the two rays are parallel enough not to care.
+    const hit = this.level?.raycast(cam.position.x, cam.position.z, f.x, f.z, 80);
+    const t = hit && hit.hit ? Math.max(1.2, hit.dist) : 80;
+    out.set(
+      cam.position.x + f.x * t - this.muzzle.x,
+      cam.position.y + f.y * t - this.muzzle.y,
+      cam.position.z + f.z * t - this.muzzle.z,
+    );
+    const len = out.length() || 1;
+    return out.divideScalar(len);
+  }
 
   _weaponCtx() {
     const player = this.player;
     // Muzzle sits just in front of the eye so tracers read correctly.
     const f = player.forward(this._tmpA);
+    // From the eye, not from the camera. They are the same point in first
+    // person; in third the camera is metres behind the player, and sourcing
+    // shots there put the muzzle inside the wall he was standing against and
+    // sent tracers past his own head from behind.
     this.muzzle.set(
-      this.camera.position.x + f.x * 0.55,
-      this.camera.position.y + f.y * 0.55 - 0.12,
-      this.camera.position.z + f.z * 0.55,
+      player.pos.x + f.x * 0.55,
+      player.eyeY() + f.y * 0.55 - 0.12,
+      player.pos.z + f.z * 0.55,
     );
     return {
       player, level: this.level, now: this.now,
       firing: this.input.locked && this.input.mouse.left && !this.cine?.active,
       firePressed: this.input.mouse.leftPressed && !this.cine?.active,
       muzzle: this.muzzle,
+      aimDir: (out) => this._aimDir(out),
       projectiles: this.projectiles,
       particles: this.particles,
       audio,
@@ -1630,10 +1979,16 @@ class Game {
       }
     }
 
-    this.particles.burst(enemy.pos.x, enemy.pos.y + enemy.height * 0.5, enemy.pos.z, 16, {
-      color: [enemy.type.build.body, enemy.type.build.head, enemy.type.build.eye],
-      speed: 7, size: 0.11, life: 0.8,
-    });
+    // Viscera is a slider, and this is the one place a kill sprays. Zero is a
+    // real setting — some people want the game without the mess — so this
+    // rounds down to nothing rather than to a token puff.
+    const gore = Math.round(16 * this.opts.gore);
+    if (gore > 0) {
+      this.particles.burst(enemy.pos.x, enemy.pos.y + enemy.height * 0.5, enemy.pos.z, gore, {
+        color: [enemy.type.build.body, enemy.type.build.head, enemy.type.build.eye],
+        speed: 7, size: 0.11 * (0.7 + this.opts.gore * 0.3), life: 0.8,
+      });
+    }
     audio.hit(enemy.type.hitSound === 'metal' ? 'metal' : 'flesh');
 
     // Occasional drops
@@ -2929,10 +3284,18 @@ class Game {
     const swapDip = (1 - this.vmSwapT) * 0.5;
     const swingAmt = this.vmSwing * this.vmSwing;
 
+    // Aiming pulls the weapon to the centre of the screen and in toward the
+    // eye, and damps the sway that is charming at the hip and unbearable
+    // through a sight. Melee has no sights, so it only gets the guard-up pose.
+    const ads = melee ? 0 : p.aim;
+    const restX = baseX + sway - swingAmt * 0.24;
+    const restY = baseY + bob - swapDip - swingAmt * 0.14;
+    const restZ = baseZ + this.vmKick * 0.1;
+    // Where the sights sit: dead centre laterally, on the eye line, closer in.
     this.vmHolder.position.set(
-      baseX + sway - swingAmt * 0.24,
-      baseY + bob - swapDip - swingAmt * 0.14,
-      baseZ + this.vmKick * 0.1,
+      restX * (1 - ads) + (sway * 0.25) * ads,
+      restY * (1 - ads) + (-0.075 + bob * 0.25 - swapDip) * ads,
+      restZ * (1 - ads) + (baseZ + 0.20 + this.vmKick * 0.06) * ads,
     );
     this.vmHolder.rotation.set(
       -p.pitch * 0.06 + this.vmKick * 0.34 + swingAmt * 1.5 - swapDip * 1.1,
@@ -2940,8 +3303,11 @@ class Game {
       // gun is seen from its side. Dead-on you are looking at a breech: the
       // Behemoth's six barrels, the AK's gas tube and every rail on every
       // weapon only read in profile, which is why every shooter does this.
-      Math.PI + (melee ? 0.26 : 0.22) - swingAmt * 0.5,
-      0.02 + sway * 1.2 + swingAmt * 0.5,
+      // Canting is a hip-fire idea. Down the sights the weapon has to be
+      // square to the eye or the rear notch is not pointing at anything, so
+      // the cant unwinds as the gun comes up.
+      Math.PI + (melee ? 0.26 : 0.22) * (1 - ads) - swingAmt * 0.5,
+      (0.02 + sway * 1.2 + swingAmt * 0.5) * (1 - ads * 0.85),
     );
 
     let reloadT = -1;
@@ -3231,6 +3597,12 @@ class Game {
       speaker = text.slice(0, i);
       text = text.slice(i + 1).trim();
     }
+    // --- the two joke settings, applied at the one place every line passes ---
+    if (this.opts.compliance && (line.speaker === 'KIMVATCH' || line.speaker === 'COLD')) {
+      text = complianceRewrite(text);
+      speaker = `${speaker} (via COMPLIANCE)`;
+    }
+    if (this.opts.subtitlesLie) text = unreliableCaption(text, this.floorIndex);
     this.hud.intercom(speaker, text, cls);
     if (line.speaker === 'GLITCH') {
       audio.glitch(1); this.hud.glitchBurst(0.5 * this.opts.flash);
@@ -3485,8 +3857,13 @@ class Game {
       this.renderer.setRenderTarget(target);
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
+      // The viewmodel is a first-person conceit: it lives in its own scene on
+      // top of the world so it cannot clip walls, which also means it would
+      // hang in front of the third-person camera with nothing attached to it.
+      // Behind the shoulder, the body is holding the weapon instead.
       const firstPerson = (this.state === 'playing' || this.state === 'paused')
-        && !this.cine?.active;
+        && !this.cine?.active
+        && (this._tpDist ?? 0) < 0.4;
       if (firstPerson) {
         this.renderer.clearDepth();
         this.renderer.render(this.vmScene, this.vmCamera);

@@ -250,9 +250,13 @@ export class DamageNumbers {
       this.pool.push({ el, life: 0, maxLife: 1, x: 0, y: 0, z: 0, vy: 2, offX: 0 });
     }
     this._v = new THREE.Vector3();
+    // Gated here rather than at the dozen call sites that emit a number. A
+    // setting enforced in one place cannot be half-implemented.
+    this.enabled = true;
   }
 
   add(x, y, z, amount, kind = 'normal') {
+    if (!this.enabled) return;
     for (const n of this.pool) {
       if (n.life > 0) continue;
       n.life = n.maxLife = kind === 'crit' ? 1.05 : 0.8;

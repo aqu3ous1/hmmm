@@ -86,7 +86,12 @@ try {
           if (move) {
             g.input.keys.add('KeyW');
             if (k % 40 < 20) g.input.keys.add('KeyA'); else g.input.keys.delete('KeyA');
+            // C is crouch now and Ctrl is the dodge; press both so neither
+            // path goes unexercised. The crouch toggles back off next time.
             if (k % 97 === 0) g.input.pressedThisFrame.add('KeyC');
+            if (k % 61 === 0) g.input.pressedThisFrame.add('ControlLeft');
+            // Aim down sights for a stretch of every cycle.
+            g.input.mouse.right = (k % 120) > 84;
             if (k % 53 === 0) g.input.pressedThisFrame.add('Space');
           }
           if (aim) {
@@ -347,6 +352,76 @@ try {
     if (!(r.body > 0)) errors.push(`${r.id} takes no body damage — its hit volume is not where its model is`);
   }
   if (flyTest.every((r) => r.body > 0)) console.log('✓ flying and static enemies take body damage');
+
+  // ---- stances, sights and the third-person camera ----------------------
+  // These are cheap to break silently: a stance that stops changing the hit
+  // height is still an animation, and a third-person camera that stops moving
+  // still renders a body. Both would look fine in a screenshot.
+  const viewTest = await page.evaluate(() => {
+    const g = window.game;
+    const settle = (n = 40) => {
+      for (let i = 0; i < n; i++) { g.now += 1 / 60; g.update(1 / 60); g.input.endFrame(); }
+    };
+    const out = { stances: [], errors: [] };
+
+    for (const stance of ['stand', 'crouch', 'prone']) {
+      g.player.stance = stance;
+      settle();
+      out.stances.push({
+        stance, eye: +g.player.eyeY().toFixed(2), height: +g.player.height.toFixed(2),
+      });
+    }
+    g.player.stance = 'stand';
+    settle();
+
+    // Sights: field of view narrows and the cone tightens.
+    g.player.slots[0] = null;
+    g._refreshPairing();
+    const fovHip = g.camera.fov;
+    g.input.mouse.right = true;
+    settle(60);
+    const fovAds = g.camera.fov;
+    out.aim = +g.player.aim.toFixed(2);
+    out.fovHip = +fovHip.toFixed(1);
+    out.fovAds = +fovAds.toFixed(1);
+    g.input.mouse.right = false;
+    settle(40);
+
+    // Third person: the camera has to actually leave the eye, and a body has
+    // to exist for it to be looking at.
+    const eyeCam = g.camera.position.clone();
+    g.opts.thirdPerson = 'far';
+    settle(80);
+    out.boom = +g.camera.position.distanceTo(eyeCam).toFixed(2);
+    out.hasBody = !!g.playerBody && g.playerBody.visible;
+    let bodyMeshes = 0;
+    g.playerBody?.traverse((o) => { if (o.isMesh) bodyMeshes++; });
+    out.bodyMeshes = bodyMeshes;
+    // …and the weapon has to be in his hand, not floating at the lens.
+    out.heldWeapon = g.playerBody?.userData?.heldId || null;
+    g.opts.thirdPerson = 'off';
+    settle(60);
+    out.backToEye = +g.camera.position.distanceTo(g.player.pos).toFixed(2);
+    return out;
+  });
+  const [stand, crouch, prone] = viewTest.stances;
+  console.log(`   stances: stand eye ${stand.eye} / crouch ${crouch.eye} / prone ${prone.eye}`);
+  if (!(stand.eye > crouch.eye + 0.3 && crouch.eye > prone.eye + 0.3)) {
+    errors.push(`stances do not lower the eye: ${JSON.stringify(viewTest.stances)}`);
+  }
+  if (!(stand.height > crouch.height + 0.3 && crouch.height > prone.height + 0.3)) {
+    errors.push(`stances do not shrink the hit volume: ${JSON.stringify(viewTest.stances)}`);
+  } else console.log('✓ crouch and prone lower the eye and the hit volume');
+
+  console.log(`   sights: fov ${viewTest.fovHip} -> ${viewTest.fovAds} (aim ${viewTest.aim})`);
+  if (!(viewTest.aim > 0.9)) errors.push('right mouse does not raise the sights');
+  else if (!(viewTest.fovAds < viewTest.fovHip - 5)) errors.push('aiming does not narrow the field of view');
+  else console.log('✓ right click aims down sights');
+
+  console.log(`   third person: boom ${viewTest.boom}m, ${viewTest.bodyMeshes} body meshes, holding ${viewTest.heldWeapon}`);
+  if (!(viewTest.boom > 1.5)) errors.push('third person does not move the camera off the eye');
+  else if (!viewTest.hasBody || viewTest.bodyMeshes < 6) errors.push('third person shows no player body');
+  else console.log('✓ third person pulls back and shows a body holding the weapon');
 
   // --- Floor 0: open the prologue chest via the real interaction path. ---
   // The opening cutscene owns the camera and swallows input; skip it the way a

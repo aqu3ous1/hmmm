@@ -167,15 +167,23 @@ export class WeaponRuntime {
     if (e.traits.has('random')) rollMod = this._prototypeRoll(ctx, e);
 
     const pellets = Math.max(1, Math.round(e.pellets * (rollMod?.pellets || 1)));
-    const spread = e.spread * (rollMod?.spread ?? 1);
+    // Sights tighten the cone. Not to zero — a shotgun aimed carefully is still
+    // a shotgun, and a weapon that becomes a laser on right-click makes hip
+    // fire pointless for the rest of the run.
+    const adsTighten = 1 - (ctx.player.aim || 0) * 0.62;
+    const spread = e.spread * (rollMod?.spread ?? 1) * adsTighten;
     const dmgScale = (rollMod?.damage ?? 1) * (e.traits.has('charge') ? this._chargeScale(e, chargeScale) : 1);
 
     ctx.audio.shoot({ ...w.sound, volume: (w.sound.volume || 0.5) * (rollMod ? 0.9 : 1) });
     ctx.muzzleFlash(w, e);
-    ctx.viewKick(e.recoil * (rollMod?.recoil ?? 1) * (e.traits.has('charge') ? 0.6 + chargeScale : 1));
+    // Shouldering the weapon absorbs some of the kick, which is the other half
+    // of why anyone aims.
+    ctx.viewKick(e.recoil * (rollMod?.recoil ?? 1)
+      * (e.traits.has('charge') ? 0.6 + chargeScale : 1)
+      * (1 - (ctx.player.aim || 0) * 0.35));
 
     const origin = ctx.muzzle;
-    ctx.player.forward(_dir);
+    ctx.aimDir(_dir);
 
     for (let i = 0; i < pellets; i++) {
       const dx = _dir.x + (Math.random() - 0.5) * spread * 2;
@@ -278,7 +286,7 @@ export class WeaponRuntime {
     ctx.swingViewmodel();
 
     const player = ctx.player;
-    player.forward(_dir);
+    ctx.aimDir(_dir);
     const range = e.range;
     const arc = e.traits.has('cleave') ? (e.params.cleaveArc || 2.2) : 1.1;
     const targets = ctx.targetsInCone(player.pos, _dir, range, arc);
@@ -319,7 +327,7 @@ export class WeaponRuntime {
 
   _grapple(ctx, w, e) {
     const player = ctx.player;
-    player.forward(_dir);
+    ctx.aimDir(_dir);
     ctx.audio.shoot({ ...w.sound });
     ctx.viewKick(e.recoil);
 
@@ -372,7 +380,7 @@ export class WeaponRuntime {
   _sandwich(ctx, w, e) {
     ctx.audio.shoot({ ...w.sound });
     ctx.viewKick(e.recoil * 0.6);
-    ctx.player.forward(_dir);
+    ctx.aimDir(_dir);
     const spoiled = e.traits.has('spoiled');
     ctx.projectiles.spawn({
       x: ctx.muzzle.x, y: ctx.muzzle.y, z: ctx.muzzle.z,

@@ -7,6 +7,21 @@ export const PLAYER_RADIUS = 0.42;
 export const PLAYER_HEIGHT = 1.72;
 const EYE = 1.58;
 
+/**
+ * The three stances, and what each one costs.
+ *
+ * `height` is not cosmetic: the projectile test measures against it, and
+ * enemies aim at `eyeY() - 0.2`. Dropping means a volley already in the air —
+ * aimed at where your head was a moment ago — passes over you. That is the
+ * whole reason crawling exists in a game with no low doorways to crawl under,
+ * and it is a real mechanic rather than an animation.
+ */
+export const STANCES = {
+  stand: { eye: EYE, height: PLAYER_HEIGHT, speed: 1, canSprint: true, canDodge: true, canJump: true },
+  crouch: { eye: 1.02, height: 1.16, speed: 0.52, canSprint: false, canDodge: true, canJump: true },
+  prone: { eye: 0.46, height: 0.58, speed: 0.26, canSprint: false, canDodge: false, canJump: false },
+};
+
 export class Player {
   constructor() {
     this.pos = new THREE.Vector3(0, 0, 0);
@@ -26,12 +41,28 @@ export class Player {
     this.vy = 0;
     this.jumpsLeft = 1;
 
+    // Stance. `eye` and `height` are damped toward the stance's targets rather
+    // than snapped, because a camera that teleports 1.1 metres downward reads
+    // as a bug even when it is exactly what you asked for.
+    this.stance = 'stand';
+    this.stanceT = 0;             // 0..1 blend toward the current stance
+    this.eye = EYE;
+    this.aim = 0;                 // 0..1 how far the sights are up
+    this.aiming = false;
+    this.gait = 0;                // walk-cycle phase, for the third-person rig
+
     this.sprinting = false;
     this.dodgeTime = 0;           // > 0 while rolling
     this.dodgeCooldown = 0;
     this.iFrames = 0;
     this.dodgeDir = new THREE.Vector3();
 
+    // Gravity is a field rather than a constant so a menu can change it. At
+    // 0.42 of normal the jump arc roughly triples in length, which is the
+    // number where the corridors start to feel like a different game rather
+    // than like a bug.
+    this.gravity = 21;
+    this.jumpImpulse = 6.2;
     this.baseSpeed = 6.4;
     this.sprintMul = 1.42;
     this.speedMul = 1;            // synergy / status effects
@@ -64,7 +95,26 @@ export class Player {
     this.alive = true;
   }
 
-  eyeY() { return this.pos.y + EYE; }
+  eyeY() { return this.pos.y + this.eye; }
+
+  /** The stance's table entry, for anything that needs its limits. */
+  get stanceDef() { return STANCES[this.stance] || STANCES.stand; }
+
+  /**
+   * Change stance, or stand back up if already in the one requested.
+   *
+   * Returns true if anything changed, so the caller can play the sound only
+   * when it did.
+   */
+  setStance(next) {
+    const want = this.stance === next ? 'stand' : next;
+    if (want === this.stance) return false;
+    // You cannot go straight from prone to sprinting; standing up from the
+    // floor goes through a crouch, which is also what stops a prone player
+    // rocketing out of cover the instant they are shot at.
+    this.stance = (this.stance === 'prone' && want === 'stand') ? 'crouch' : want;
+    return true;
+  }
 
   get weapon() {
     return this.slots[this.activeSlot] || this.fists;
@@ -139,6 +189,8 @@ export class Player {
 
   tryDodge(moveAxis) {
     if (this.dodgeCooldown > 0 || this.dodgeTime > 0) return false;
+    // A dive from prone is a wriggle. Stand up first.
+    if (!this.stanceDef.canDodge) { this.setStance('stand'); return false; }
     const f = this.flatForward(new THREE.Vector3());
     const r = this.right(new THREE.Vector3());
     let dx = r.x * moveAxis.x + f.x * moveAxis.y;
@@ -160,12 +212,43 @@ export class Player {
     if (now > this.slowUntil) this.slowFactor = 1;
 
     const axis = input ? input.moveAxis() : { x: 0, y: 0 };
-    const wantSprint = input ? input.down('ShiftLeft') || input.down('ShiftRight') : false;
-    this.sprinting = wantSprint && axis.y > 0.2 && this.dodgeTime <= 0;
+    // Auto-sprint. Applied to the axis rather than to the sprint flag, so a
+    // player who has stopped is not still counted as sprinting.
+    if (this.autoSprint && axis.y > 0.2) this._autoRun = true;
+    else if (!input || axis.y <= 0.2) this._autoRun = false;
+
+    // --- stance -----------------------------------------------------------
+    if (input) {
+      if (input.pressed('KeyC')) this.setStance('crouch');
+      if (input.pressed('KeyZ')) this.setStance('prone');
+      // Sprinting out of a crouch is what everyone expects; holding shift
+      // while crouched and going nowhere is not a request to stand up.
+      if ((input.down('ShiftLeft') || input.down('ShiftRight'))
+        && axis.y > 0.2 && this.stance === 'crouch') this.stance = 'stand';
+    }
+    const st = this.stanceDef;
+    this.eye = damp(this.eye, st.eye, 12, dt);
+    this.height = damp(this.height, st.height, 12, dt);
+    this.stanceT = damp(this.stanceT, this.stance === 'stand' ? 0 : 1, 12, dt);
+
+    // --- aim down sights --------------------------------------------------
+    // Held, not toggled. A toggle is one more piece of state for the player to
+    // lose track of in a fight, and this game's fights do not pause.
+    this.aiming = !!(input && input.mouse.right && this.dodgeTime <= 0 && this.alive);
+    this.aim = damp(this.aim, this.aiming ? 1 : 0, 14, dt);
+
+    const wantSprint = (input ? input.down('ShiftLeft') || input.down('ShiftRight') : false)
+      || (this.autoSprint && this._autoRun);
+    this.sprinting = wantSprint && axis.y > 0.2 && this.dodgeTime <= 0
+      && st.canSprint && !this.aiming;
 
     const weaponMove = this.weapon?.effectiveMoveMul ?? 1;
-    let speed = this.baseSpeed * this.speedMul * weaponMove * this.slowFactor * (this.carryPenalty ?? 1);
+    let speed = this.baseSpeed * this.speedMul * weaponMove * this.slowFactor
+      * (this.carryPenalty ?? 1) * st.speed;
     if (this.sprinting) speed *= this.sprintMul;
+    // Aiming plants you. Not as hard as a crouch, but enough that the choice
+    // between accuracy and mobility is an actual choice.
+    if (this.aiming) speed *= 0.55;
 
     const f = this.flatForward(_f);
     const r = this.right(_r);
@@ -187,13 +270,17 @@ export class Player {
     this.vel.x = damp(this.vel.x, wishX, accel, dt);
     this.vel.z = damp(this.vel.z, wishZ, accel, dt);
 
-    // Vertical
-    if (input && input.pressed('Space') && this.jumpsLeft > 0) {
-      this.vy = 6.2;
-      this.onGround = false;
-      this.jumpsLeft--;
+    // Vertical. Jumping from a stance stands you up instead — the alternative
+    // is a player hopping around the room while prone, which is funny once.
+    if (input && input.pressed('Space')) {
+      if (this.stance !== 'stand') this.setStance('stand');
+      else if (this.jumpsLeft > 0) {
+        this.vy = this.jumpImpulse;
+        this.onGround = false;
+        this.jumpsLeft--;
+      }
     }
-    this.vy -= 21 * dt;
+    this.vy -= this.gravity * dt;
     this.pos.y += this.vy * dt;
     if (this.pos.y <= 0) {
       this.pos.y = 0;
@@ -221,6 +308,9 @@ export class Player {
     // View feel
     const planarSpeed = Math.hypot(this.vel.x, this.vel.z);
     this.bob += dt * planarSpeed * 1.35;
+    // Gait phase for the third-person rig. Driven by distance travelled, not
+    // by time, so the legs stop when he stops and never skate.
+    this.gait += dt * planarSpeed * (this.stance === 'prone' ? 3.4 : 2.0);
     this.viewRoll = damp(this.viewRoll, -axis.x * 0.035 + (this.dodgeTime > 0 ? 0.22 : 0), 9, dt);
     this.recoilPitch = damp(this.recoilPitch, 0, 9, dt);
     this.recoilYaw = damp(this.recoilYaw, 0, 9, dt);
@@ -266,6 +356,12 @@ export class Player {
     this.dodgeCooldown = 0;
     this.shake = 0;
     this.slowFactor = 1;
+    // Respawning flat on your face is not a fresh start.
+    this.stance = 'stand';
+    this.eye = STANCES.stand.eye;
+    this.height = STANCES.stand.height;
+    this.aim = 0;
+    this.aiming = false;
   }
 }
 

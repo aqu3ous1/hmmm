@@ -36,10 +36,16 @@ const out = await page.evaluate(async () => {
     root.traverse((o) => {
       if (!o.isMesh || !o.material) return;
       const m = o.material;
+      // Opacity belongs in the key, not in an "alpha" suffix. Collapsing every
+      // unlit part into one `basic` row hid the real shape of the problem: the
+      // Glitchling's ghosts run at four different alphas and each one is its
+      // own material, so a probe that prints "basic" once under-reports it by
+      // three draw calls per rig group.
+      const a = (m.opacity ?? 1) < 1 ? ` a${(m.opacity ?? 1).toFixed(2)}` : '';
       const key = m.isMeshBasicMaterial
-        ? 'basic'
+        ? `basic${a}`
         : `m${(m.metalness ?? 0).toFixed(2)} r${(m.roughness ?? 0).toFixed(2)}`
-          + `${m.flatShading ? '' : ' smooth'}${(m.opacity ?? 1) < 1 ? ' alpha' : ''}`
+          + `${m.flatShading ? '' : ' smooth'}${a}`
           + `${m.emissive && m.emissive.getHex() ? ' emis' : ''}`;
       seen.set(key, (seen.get(key) || 0) + (o.geometry?.index?.count ?? 0) / 3);
     });

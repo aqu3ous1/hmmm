@@ -149,7 +149,11 @@
           <li><b>Left click</b><span>Fire / swing</span></li>
           <li><b>Shift</b><span>Sprint</span></li>
           <li><b>Space</b><span>Jump</span></li>
-          <li><b>Ctrl / C</b><span>Dodge roll (brief invulnerability)</span></li>
+          <li><b>Ctrl</b><span>Dodge roll (brief invulnerability)</span></li>
+          <li><b>C</b><span>Crouch — slower, smaller, steadier</span></li>
+          <li><b>Z</b><span>Go prone — crawl under incoming fire</span></li>
+          <li><b>Right click</b><span>Aim down sights</span></li>
+          <li><b>V</b><span>Cycle first / third person</span></li>
           <li><b>R</b><span>Reload</span></li>
           <li><b>Q</b><span>Swap weapon</span></li>
           <li><b>1 / 2</b><span>Select slot</span></li>
@@ -233,6 +237,52 @@
           <option value="trit">Tritanopia — blue/yellow</option>
           <option value="mono">Monochrome — shape and brightness only</option>
         </select>
+      </label>
+    </div>
+
+    <h3 class="accessHead">VIEW &amp; COMFORT</h3>
+    <div class="sliders access">
+      <label>Field of view <input id="optFov" type="range" min="65" max="110" value="78" /></label>
+      <label class="select">
+        <span>Camera<i>V cycles this in game</i></span>
+        <select id="optView">
+          <option value="off">First person</option>
+          <option value="shoulder">Third person — over the shoulder</option>
+          <option value="far">Third person — wide</option>
+        </select>
+      </label>
+      <label class="check">
+        <input id="optAutoSprint" type="checkbox" />
+        <span>Auto-sprint<i>Run forward without holding shift</i></span>
+      </label>
+      <label class="check">
+        <input id="optHitMark" type="checkbox" checked />
+        <span>Hit markers<i>A tick on the reticle when a shot connects</i></span>
+      </label>
+      <label class="check">
+        <input id="optDmgNum" type="checkbox" checked />
+        <span>Damage numbers<i>Off is quieter; the numbers are still counted</i></span>
+      </label>
+    </div>
+
+    <h3 class="accessHead">EXPERIMENTS</h3>
+    <div class="sliders access">
+      <label>Viscera <input id="optGore" type="range" min="0" max="200" value="100" /></label>
+      <label class="check">
+        <input id="optLowG" type="checkbox" />
+        <span>Reduced gravity<i>Pod 9001 test protocol 12-B. Never formally cancelled.</i></span>
+      </label>
+      <label class="check">
+        <input id="optBigHead" type="checkbox" />
+        <span>Cranial expansion<i>Dr. Kimvatch insists this was a rendering fault</i></span>
+      </label>
+      <label class="check">
+        <input id="optCompliance" type="checkbox" />
+        <span>Legal review<i>Kimvatch's remarks are cleared by Compliance first</i></span>
+      </label>
+      <label class="check">
+        <input id="optSubs" type="checkbox" />
+        <span>Unreliable subtitles<i>The captions have their own opinion</i></span>
       </label>
     </div>
 
